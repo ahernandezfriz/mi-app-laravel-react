@@ -1,44 +1,72 @@
-# TODO - Puesta en marcha de entorno Docker (dev)
+# ToDo de Implementacion (MVP)
 
-## 1) Preparar codigo base
-- [x] Crear backend Laravel en `./backend` o copiar proyecto existente.
-- [x] Crear frontend React + Vite en `./frontend` o copiar proyecto existente.
-- [x] Verificar que existan `composer.json` y `package.json`.
+## Estado actual
+- [x] Entorno Docker funcionando (`backend`, `nginx`, `frontend`, `db`).
+- [x] Proyecto base Laravel + React levantado.
+- [ ] Documentacion funcional consolidada en `docs/requerimientos.md`.
 
-## 2) Levantar infraestructura
-- [x] Ejecutar `docker compose up --build`.
-- [x] Confirmar contenedores activos: `gestion-backend`, `gestion-nginx`, `gestion-frontend`, `gestion-db`.
-- [x] Probar API desde navegador: `http://localhost:8080`.
-- [x] Probar frontend: `http://localhost:5173`.
+## Sprint 1 - Base funcional (prioridad alta)
 
-## 3) Inicializar Laravel (manual)
-- [x] Entrar al contenedor backend.
-- [x] Ejecutar `composer install`.
-- [x] Copiar `.env.example` a `.env`.
-- [x] Configurar DB en `.env`:
-  - `DB_HOST=db`
-  - `DB_PORT=3306`
-  - `DB_DATABASE=gestion_db`
-  - `DB_USERNAME=gestion_user`
-  - `DB_PASSWORD=gestion_pass`
-- [x] Ejecutar `php artisan key:generate`.
-- [x] Ejecutar migraciones manuales cuando aplique: `php artisan migrate`.
+### A. Fundaciones del dominio
+- [x] Definir modelo de datos inicial (entidades y relaciones).
+- [x] Crear catalogos iniciales: profesiones, niveles y cursos.
+- [x] Definir enums: estado de sesion y calificacion de tarea.
+- [ ] Establecer convenciones API (estructura de respuestas y errores).
 
-## 4) Inicializar frontend (manual)
-- [x] Entrar al contenedor frontend.
-- [x] Ejecutar `npm install`.
-- [x] Verificar que Vite escuche en `0.0.0.0:5173`.
-- [x] Crear `.env` frontend con `VITE_API_URL=http://localhost:8080/api`.
+### B. Autenticacion y roles
+- [x] Implementar auth completa: registro, login, logout.
+- [x] Implementar recuperacion y reseteo de contrasena.
+- [x] Implementar roles iniciales: `super_admin`, `admin_establecimiento`, `profesional`.
+- [x] Implementar autorizacion por rol y ownership de datos.
 
-## 5) Verificaciones finales
-- [x] Confirmar conexion Laravel -> MySQL.
-- [x] Confirmar consumo API desde React.
-- [x] Confirmar hot reload en backend/frontend.
-- [x] Registrar incidencias y ajustes pendientes.
+### C. Estudiantes (pacientes)
+- [x] Crear CRUD de estudiantes.
+- [x] Validar RUT y datos obligatorios.
+- [x] Implementar selector dependiente nivel -> curso.
+- [x] Formatear visualizacion de curso (ej: `1 Basico C`, `2 Medio A`).
+- [x] Implementar relacion N:M estudiantes <-> profesionales.
 
-## Notas
-- Migraciones quedan manuales por decision del proyecto.
-- Se agrego endpoint de salud `GET /api/health` y verificacion desde frontend.
-- Se agrego `backend/config/cors.php` para permitir origen `http://localhost:5173`.
-- Incidencia detectada: despues de recrear contenedores, Nginx presento 502 hacia PHP-FPM; se resolvio con `docker compose restart nginx`.
-- En PowerShell, usar `Invoke-WebRequest` en lugar de `curl -w` para validaciones HTTP.
+### D. Planes de tratamiento anuales
+- [x] Crear CRUD de planes por estudiante y anio.
+- [x] Restringir duplicidad por estudiante+anio.
+- [x] Guardar `diagnosis_snapshot` al crear plan.
+- [x] Mostrar historial anual de planes en ficha del estudiante.
+
+## Sprint 2 - Flujo terapeutico (prioridad alta)
+
+### E. Sesiones
+- [x] Crear CRUD de sesiones dentro de un plan.
+- [x] Campos minimos: fecha, objetivo, descripcion, estado.
+- [x] Permitir finalizar sesion.
+- [x] Mostrar historial de sesiones por plan.
+
+### F. Biblioteca de tareas reutilizables
+- [ ] Crear CRUD de tareas por profesional.
+- [ ] Permitir seleccionar tareas de biblioteca en una sesion.
+- [ ] Permitir tareas libres (opcionales) dentro de sesion.
+
+### G. Calificaciones por tarea
+- [ ] Guardar calificacion por tarea dentro de cada sesion.
+- [ ] Escala: `Por lograr`, `Lo logra con dificultad`, `Lo logra`.
+- [ ] Al revisar sesion, mostrar resultados de cada tarea.
+- [ ] Mostrar historial de desempeno por tarea (vista resumida).
+
+## Sprint 3 - Reportes y salida MVP
+
+### H. Informes y comunicacion
+- [ ] Generar PDF por sesion finalizada.
+- [ ] Incluir datos de estudiante, diagnostico, plan, sesion y tareas calificadas.
+- [ ] Enviar informe por correo al apoderado.
+- [ ] Generar PDF consolidado por plan anual.
+
+### I. Calidad y estabilizacion
+- [ ] Pruebas de permisos y acceso por rol.
+- [ ] Pruebas de reglas criticas (nivel/curso, plan unico por anio).
+- [ ] Pruebas de reportes (PDF y correo).
+- [ ] Checklist de despliegue y operacion.
+
+## Backlog posterior (MVP+)
+- [ ] Dashboard con metricas por profesional/establecimiento.
+- [ ] Filtros avanzados por curso, anio, profesional, estado.
+- [ ] Plantillas de sesiones frecuentes.
+- [ ] Auditoria de cambios relevantes.

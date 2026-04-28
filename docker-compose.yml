@@ -3,7 +3,7 @@ services:
   backend:
     build:
       context: ./backend
-    container_name: gestion-backend
+    container_name: gestion-backend-app
     working_dir: /var/www
     volumes:
       - ./backend:/var/www
@@ -25,7 +25,7 @@ services:
   # Nginx para servir Laravel
   nginx:
     image: nginx:1.27-alpine
-    container_name: gestion-nginx
+    container_name: gestion-nginx-app
     ports:
       - "8080:80"
     volumes:
@@ -40,7 +40,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    container_name: gestion-frontend
+    container_name: gestion-frontend-app
     ports:
       - "5173:5173"
     volumes:
@@ -56,7 +56,7 @@ services:
   # Base de datos
   db:
     image: mysql:8.0
-    container_name: gestion-db
+    container_name: gestion-db-app
     ports:
       - "3306:3306"
     environment:
