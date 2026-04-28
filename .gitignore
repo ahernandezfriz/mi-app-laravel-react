@@ -1,0 +1,16 @@
+# Environment files (sensitive)
+backend/.env
+frontend/.env
+
+# Dependencies
+frontend/node_modules/
+backend/vendor/
+
+# Build artifacts and cache
+frontend/dist/
+backend/bootstrap/cache/*.php
+backend/storage/logs/*.log
+
+# OS/editor files
+.DS_Store
+Thumbs.db
