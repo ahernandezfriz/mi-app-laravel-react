@@ -237,6 +237,8 @@ Registrar desempeno por tarea dentro de cada sesion.
 
 ## Sprint 3 - Reportes y salida MVP
 
+**Estado actual:** completado (implementado y validado E2E).
+
 ### TKT-014 - PDF de sesion finalizada
 **Objetivo**
 Generar informe formal por sesion para seguimiento.

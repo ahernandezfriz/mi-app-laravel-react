@@ -2,7 +2,10 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CatalogController;
+use App\Http\Controllers\ReportController;
+use App\Http\Controllers\SessionTaskController;
 use App\Http\Controllers\StudentController;
+use App\Http\Controllers\TaskTemplateController;
 use App\Http\Controllers\TherapySessionController;
 use App\Http\Controllers\TreatmentPlanController;
 use Illuminate\Support\Facades\Route;
@@ -35,4 +38,16 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions', [TherapySessionController::class, 'store']);
     Route::put('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}', [TherapySessionController::class, 'update']);
     Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}', [TherapySessionController::class, 'destroy']);
+    Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/pdf', [ReportController::class, 'sessionPdf']);
+    Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/send-report', [ReportController::class, 'sendSessionReportEmail']);
+    Route::get('/students/{student}/treatment-plans/{treatmentPlan}/consolidated-pdf', [ReportController::class, 'consolidatedPlanPdf']);
+    Route::get('/task-templates', [TaskTemplateController::class, 'index']);
+    Route::post('/task-templates', [TaskTemplateController::class, 'store']);
+    Route::put('/task-templates/{taskTemplate}', [TaskTemplateController::class, 'update']);
+    Route::delete('/task-templates/{taskTemplate}', [TaskTemplateController::class, 'destroy']);
+    Route::get('/task-templates/{taskTemplate}/history', [SessionTaskController::class, 'history']);
+    Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/tasks', [SessionTaskController::class, 'index']);
+    Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/tasks', [SessionTaskController::class, 'store']);
+    Route::put('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/tasks/{sessionTask}', [SessionTaskController::class, 'update']);
+    Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/tasks/{sessionTask}', [SessionTaskController::class, 'destroy']);
 });

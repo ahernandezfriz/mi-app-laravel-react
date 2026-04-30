@@ -12,6 +12,11 @@ const initialStudent = {
   guardian_phone: '',
   guardian_email: '',
 }
+const ratingOptions = [
+  { value: 'por_lograr', label: 'Por lograr' },
+  { value: 'con_dificultad', label: 'Lo logra con dificultad' },
+  { value: 'logrado', label: 'Lo logra' },
+]
 
 function App() {
   const [status, setStatus] = useState('Inicializando...')
@@ -48,6 +53,19 @@ function App() {
     description: '',
     status: 'draft',
   })
+  const [taskTemplates, setTaskTemplates] = useState([])
+  const [templateForm, setTemplateForm] = useState({ name: '', description: '' })
+  const [editingTemplateId, setEditingTemplateId] = useState(null)
+  const [selectedSession, setSelectedSession] = useState(null)
+  const [sessionTasks, setSessionTasks] = useState([])
+  const [taskForm, setTaskForm] = useState({
+    task_template_id: '',
+    name: '',
+    description: '',
+    rating: 'por_lograr',
+  })
+  const [editingTaskId, setEditingTaskId] = useState(null)
+  const [taskHistory, setTaskHistory] = useState([])
   const healthUrl = useMemo(() => `${apiBaseUrl}/health`, [])
 
   const api = useCallback(async (path, options = {}) => {
@@ -98,6 +116,15 @@ function App() {
     }
   }, [api])
 
+  const loadTaskTemplates = useCallback(async () => {
+    try {
+      const data = await api('/task-templates')
+      setTaskTemplates(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }, [api])
+
   useEffect(() => {
     const init = async () => {
       await checkHealth()
@@ -108,10 +135,12 @@ function App() {
 
   useEffect(() => {
     const load = async () => {
-      if (token) await loadStudents()
+      if (token) {
+        await Promise.all([loadStudents(), loadTaskTemplates()])
+      }
     }
     load()
-  }, [token, loadStudents])
+  }, [token, loadStudents, loadTaskTemplates])
 
   async function onRegister(e) {
     e.preventDefault()
@@ -174,6 +203,51 @@ function App() {
       localStorage.removeItem('token')
       setToken('')
       setStudents([])
+      setTaskTemplates([])
+    }
+  }
+
+  async function onSaveTemplate(e) {
+    e.preventDefault()
+    const path = editingTemplateId ? `/task-templates/${editingTemplateId}` : '/task-templates'
+    const method = editingTemplateId ? 'PUT' : 'POST'
+    try {
+      await api(path, { method, body: JSON.stringify(templateForm) })
+      setTemplateForm({ name: '', description: '' })
+      setEditingTemplateId(null)
+      await loadTaskTemplates()
+      setStatus('Tarea reutilizable guardada')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  function onEditTemplate(template) {
+    setEditingTemplateId(template.id)
+    setTemplateForm({
+      name: template.name,
+      description: template.description || '',
+    })
+  }
+
+  async function onDeleteTemplate(templateId) {
+    if (!window.confirm('Eliminar tarea reutilizable?')) return
+    try {
+      await api(`/task-templates/${templateId}`, { method: 'DELETE' })
+      await loadTaskTemplates()
+      setTaskHistory([])
+      setStatus('Tarea reutilizable eliminada')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onViewTemplateHistory(templateId) {
+    try {
+      const data = await api(`/task-templates/${templateId}/history`)
+      setTaskHistory(data)
+    } catch (error) {
+      setStatus(error.message)
     }
   }
 
@@ -258,10 +332,40 @@ function App() {
     }
   }
 
+  async function onDownloadPlanConsolidatedPdf(planId) {
+    if (!selectedStudent) return
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${planId}/consolidated-pdf`,
+        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
+      )
+      if (!response.ok) throw new Error('No se pudo generar PDF consolidado')
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `plan-${planId}-consolidado.pdf`
+      a.click()
+      window.URL.revokeObjectURL(url)
+      setStatus('PDF consolidado descargado')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
   async function onSelectPlan(plan) {
     if (!selectedStudent) return
     setSelectedPlan(plan)
     setEditingSessionId(null)
+    setSelectedSession(null)
+    setSessionTasks([])
+    setEditingTaskId(null)
+    setTaskForm({
+      task_template_id: '',
+      name: '',
+      description: '',
+      rating: 'por_lograr',
+    })
     setSessionForm({
       session_date: new Date().toISOString().slice(0, 10),
       objective: '',
@@ -317,6 +421,126 @@ function App() {
     }
   }
 
+  async function onDownloadSessionPdf(sessionId) {
+    if (!selectedStudent || !selectedPlan) return
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${sessionId}/pdf`,
+        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
+      )
+      if (!response.ok) throw new Error('No se pudo generar PDF de sesion')
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `sesion-${sessionId}.pdf`
+      a.click()
+      window.URL.revokeObjectURL(url)
+      setStatus('PDF de sesion descargado')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onSendSessionReport(sessionId) {
+    if (!selectedStudent || !selectedPlan) return
+    try {
+      const data = await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${sessionId}/send-report`,
+        { method: 'POST' },
+      )
+      setStatus(data.message || 'Informe enviado')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onSelectSession(session) {
+    if (!selectedStudent || !selectedPlan) return
+    setSelectedSession(session)
+    setEditingTaskId(null)
+    setTaskForm({
+      task_template_id: '',
+      name: '',
+      description: '',
+      rating: 'por_lograr',
+    })
+
+    try {
+      const data = await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`,
+      )
+      setSessionTasks(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onSaveSessionTask(e) {
+    e.preventDefault()
+    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    const isEditing = Boolean(editingTaskId)
+    const path = isEditing
+      ? `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks/${editingTaskId}`
+      : `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks`
+
+    const payload = isEditing
+      ? {
+          name: taskForm.name,
+          description: taskForm.description,
+          rating: taskForm.rating,
+        }
+      : {
+          task_template_id: taskForm.task_template_id ? Number(taskForm.task_template_id) : null,
+          name: taskForm.name,
+          description: taskForm.description,
+          rating: taskForm.rating,
+        }
+
+    try {
+      await api(path, { method: isEditing ? 'PUT' : 'POST', body: JSON.stringify(payload) })
+      await onSelectSession(selectedSession)
+      setStatus(isEditing ? 'Calificacion/tarea actualizada' : 'Tarea agregada a sesion')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  function onEditSessionTask(task) {
+    setEditingTaskId(task.id)
+    setTaskForm({
+      task_template_id: task.task_template_id ? String(task.task_template_id) : '',
+      name: task.name,
+      description: task.description || '',
+      rating: task.rating,
+    })
+  }
+
+  async function onDeleteSessionTask(taskId) {
+    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    if (!window.confirm('Eliminar tarea de la sesion?')) return
+    try {
+      await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks/${taskId}`,
+        { method: 'DELETE' },
+      )
+      await onSelectSession(selectedSession)
+      setStatus('Tarea eliminada de la sesion')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  function onTemplateSelectionChange(templateId) {
+    const template = taskTemplates.find((item) => String(item.id) === String(templateId))
+    setTaskForm({
+      ...taskForm,
+      task_template_id: templateId,
+      name: template ? template.name : '',
+      description: template?.description || '',
+    })
+  }
+
   const selectedLevel = levels.find((level) => String(level.id) === String(studentForm.school_level_id))
   const availableCourses = selectedLevel?.courses ?? []
 
@@ -367,6 +591,45 @@ function App() {
       {token && (
         <>
           <button onClick={onLogout}>Cerrar sesion</button>
+          <h2>{editingTemplateId ? 'Editar tarea reutilizable' : 'Nueva tarea reutilizable'}</h2>
+          <form onSubmit={onSaveTemplate}>
+            <input
+              placeholder="Nombre de tarea"
+              value={templateForm.name}
+              onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+            />
+            <input
+              placeholder="Descripcion de tarea"
+              value={templateForm.description}
+              onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
+            />
+            <button>{editingTemplateId ? 'Actualizar tarea' : 'Crear tarea'}</button>
+          </form>
+          <ul>
+            {taskTemplates.map((template) => (
+              <li key={template.id}>
+                {template.name}
+                <button onClick={() => onEditTemplate(template)}>Editar</button>
+                <button onClick={() => onDeleteTemplate(template.id)}>Eliminar</button>
+                <button onClick={() => onViewTemplateHistory(template.id)}>Ver historico</button>
+              </li>
+            ))}
+          </ul>
+
+          {taskHistory.length > 0 && (
+            <>
+              <h3>Historico de tarea reutilizable</h3>
+              <ul>
+                {taskHistory.map((entry) => (
+                  <li key={entry.id}>
+                    {entry.session?.treatment_plan?.student?.full_name} - {entry.session?.treatment_plan?.year} - {entry.session?.session_date}
+                    {' | '}Calificacion: {ratingOptions.find((option) => option.value === entry.rating)?.label || entry.rating}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
           <h2>{editingId ? 'Editar estudiante' : 'Nuevo estudiante'}</h2>
           <form onSubmit={onSaveStudent}>
             <input placeholder="Nombre completo" value={studentForm.full_name} onChange={(e) => setStudentForm({ ...studentForm, full_name: e.target.value })} />
@@ -419,6 +682,7 @@ function App() {
                     {' | '}Diagnostico snapshot: {plan.diagnosis_snapshot}
                     <button onClick={() => onSelectPlan(plan)}>Ver sesiones</button>
                     <button onClick={() => onDeletePlan(plan.id)}>Eliminar plan</button>
+                    <button onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}>PDF consolidado</button>
                   </li>
                 ))}
               </ul>
@@ -458,9 +722,59 @@ function App() {
                         {' | '}Objetivo: {session.objective}
                         <button onClick={() => onEditSession(session)}>Editar</button>
                         <button onClick={() => onDeleteSession(session.id)}>Eliminar</button>
+                        <button onClick={() => onSelectSession(session)}>Ver tareas</button>
+                        <button onClick={() => onDownloadSessionPdf(session.id)}>PDF sesion</button>
+                        <button onClick={() => onSendSessionReport(session.id)}>Enviar por correo</button>
                       </li>
                     ))}
                   </ul>
+
+                  {selectedSession && (
+                    <>
+                      <h4>Tareas de sesion {selectedSession.session_date}</h4>
+                      <form onSubmit={onSaveSessionTask}>
+                        {!editingTaskId && (
+                          <select
+                            value={taskForm.task_template_id}
+                            onChange={(e) => onTemplateSelectionChange(e.target.value)}
+                          >
+                            <option value="">Sin plantilla</option>
+                            {taskTemplates.map((template) => (
+                              <option key={template.id} value={template.id}>{template.name}</option>
+                            ))}
+                          </select>
+                        )}
+                        <input
+                          placeholder="Nombre de tarea"
+                          value={taskForm.name}
+                          onChange={(e) => setTaskForm({ ...taskForm, name: e.target.value })}
+                        />
+                        <input
+                          placeholder="Descripcion"
+                          value={taskForm.description}
+                          onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+                        />
+                        <select
+                          value={taskForm.rating}
+                          onChange={(e) => setTaskForm({ ...taskForm, rating: e.target.value })}
+                        >
+                          {ratingOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <button>{editingTaskId ? 'Actualizar tarea' : 'Agregar tarea a sesion'}</button>
+                      </form>
+                      <ul>
+                        {sessionTasks.map((task) => (
+                          <li key={task.id}>
+                            {task.name} - {ratingOptions.find((option) => option.value === task.rating)?.label || task.rating}
+                            <button onClick={() => onEditSessionTask(task)}>Editar</button>
+                            <button onClick={() => onDeleteSessionTask(task.id)}>Eliminar</button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
                 </>
               )}
             </>

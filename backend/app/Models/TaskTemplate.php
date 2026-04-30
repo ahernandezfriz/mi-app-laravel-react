@@ -7,25 +7,23 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-class TherapySession extends Model
+class TaskTemplate extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'treatment_plan_id',
-        'session_date',
-        'status',
-        'objective',
+        'user_id',
+        'name',
         'description',
     ];
 
-    public function treatmentPlan(): BelongsTo
+    public function user(): BelongsTo
     {
-        return $this->belongsTo(TreatmentPlan::class);
+        return $this->belongsTo(User::class);
     }
 
-    public function tasks(): HasMany
+    public function sessionTasks(): HasMany
     {
-        return $this->hasMany(SessionTask::class, 'therapy_session_id');
+        return $this->hasMany(SessionTask::class);
     }
 }
