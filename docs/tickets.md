@@ -1,5 +1,9 @@
 # Tickets de Implementacion (MVP)
 
+## Reglas frontend obligatorias
+- Para toda implementacion de vistas frontend, seguir `docs/frontend-standards.md`.
+- Estas reglas aplican a arquitectura feature-based, accesibilidad, responsive design, convenciones de nombres y UX.
+
 ## Arranque inmediato (orden recomendado)
 
 ### Semana 1 - Ejecucion sugerida

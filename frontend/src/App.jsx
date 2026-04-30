@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
+import AppRouter from './app/router/AppRouter'
+import FeedbackMessage from './shared/components/FeedbackMessage'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
 const initialStudent = {
@@ -13,10 +15,15 @@ const initialStudent = {
   guardian_email: '',
 }
 const ratingOptions = [
-  { value: 'por_lograr', label: 'Por lograr' },
-  { value: 'con_dificultad', label: 'Lo logra con dificultad' },
-  { value: 'logrado', label: 'Lo logra' },
+  { value: 'con_dificultad', label: 'No lo logra', dot: '🔴' },
+  { value: 'por_lograr', label: 'Por lograr', dot: '🟡' },
+  { value: 'logrado', label: 'Lo logra', dot: '🟢' },
 ]
+const ratingToScore = {
+  con_dificultad: 1,
+  por_lograr: 2,
+  logrado: 3,
+}
 
 function App() {
   const [status, setStatus] = useState('Inicializando...')
@@ -41,22 +48,35 @@ function App() {
   })
   const [studentForm, setStudentForm] = useState(initialStudent)
   const [editingId, setEditingId] = useState(null)
+  const [showStudentModal, setShowStudentModal] = useState(false)
+  const [isStudentModalVisible, setIsStudentModalVisible] = useState(false)
+  const [showPlanModal, setShowPlanModal] = useState(false)
+  const [isPlanModalVisible, setIsPlanModalVisible] = useState(false)
+  const [showSessionModal, setShowSessionModal] = useState(false)
+  const [isSessionModalVisible, setIsSessionModalVisible] = useState(false)
+  const [showTaskModal, setShowTaskModal] = useState(false)
+  const [isTaskModalVisible, setIsTaskModalVisible] = useState(false)
+  const [showSuspendModal, setShowSuspendModal] = useState(false)
+  const [isSuspendModalVisible, setIsSuspendModalVisible] = useState(false)
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [plans, setPlans] = useState([])
   const [planForm, setPlanForm] = useState({ year: new Date().getFullYear() })
   const [selectedPlan, setSelectedPlan] = useState(null)
   const [sessions, setSessions] = useState([])
+  const [sessionRatingSeries, setSessionRatingSeries] = useState([])
   const [editingSessionId, setEditingSessionId] = useState(null)
   const [sessionForm, setSessionForm] = useState({
     session_date: new Date().toISOString().slice(0, 10),
     objective: '',
     description: '',
-    status: 'draft',
+    status: 'pendiente',
   })
   const [taskTemplates, setTaskTemplates] = useState([])
   const [templateForm, setTemplateForm] = useState({ name: '', description: '' })
   const [editingTemplateId, setEditingTemplateId] = useState(null)
   const [selectedSession, setSelectedSession] = useState(null)
+  const [sessionObservation, setSessionObservation] = useState('')
+  const [suspensionReason, setSuspensionReason] = useState('estudiante_ausente')
   const [sessionTasks, setSessionTasks] = useState([])
   const [taskForm, setTaskForm] = useState({
     task_template_id: '',
@@ -64,8 +84,12 @@ function App() {
     description: '',
     rating: 'por_lograr',
   })
-  const [editingTaskId, setEditingTaskId] = useState(null)
+  const [taskCreationMode, setTaskCreationMode] = useState('manual')
+  const [, setEditingTaskId] = useState(null)
   const [taskHistory, setTaskHistory] = useState([])
+  const [todaySessions, setTodaySessions] = useState([])
+  const [activeSection, setActiveSection] = useState('overview')
+  const [toast, setToast] = useState({ show: false, type: 'success', message: '' })
   const healthUrl = useMemo(() => `${apiBaseUrl}/health`, [])
 
   const api = useCallback(async (path, options = {}) => {
@@ -141,6 +165,202 @@ function App() {
     }
     load()
   }, [token, loadStudents, loadTaskTemplates])
+
+  useEffect(() => {
+    // Permite animar salida antes de desmontar visualmente el modal.
+    if (showStudentModal) {
+      setIsStudentModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsStudentModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showStudentModal])
+
+  useEffect(() => {
+    // Permite animar salida antes de desmontar visualmente el modal de planes.
+    if (showPlanModal) {
+      setIsPlanModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsPlanModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showPlanModal])
+
+  useEffect(() => {
+    // Permite animar salida antes de desmontar visualmente el modal de sesiones.
+    if (showSessionModal) {
+      setIsSessionModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsSessionModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showSessionModal])
+
+  useEffect(() => {
+    // Permite animar salida antes de desmontar visualmente el modal de tareas.
+    if (showTaskModal) {
+      setIsTaskModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsTaskModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showTaskModal])
+
+  useEffect(() => {
+    // Permite animar salida antes de desmontar visualmente el modal de suspensión.
+    if (showSuspendModal) {
+      setIsSuspendModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsSuspendModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showSuspendModal])
+
+  useEffect(() => {
+    if (!toast.show) return
+
+    const timer = setTimeout(() => {
+      setToast((current) => ({ ...current, show: false }))
+    }, 3200)
+
+    return () => clearTimeout(timer)
+  }, [toast.show])
+
+  useEffect(() => {
+    if (!showStudentModal) return
+
+    // Cierra modal con tecla Escape.
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowStudentModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showStudentModal])
+
+  useEffect(() => {
+    if (!showPlanModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowPlanModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showPlanModal])
+
+  useEffect(() => {
+    if (!showSessionModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowSessionModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showSessionModal])
+
+  useEffect(() => {
+    if (!showTaskModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowTaskModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showTaskModal])
+
+  useEffect(() => {
+    if (!showSuspendModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowSuspendModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showSuspendModal])
+
+  useEffect(() => {
+    async function buildSessionRatingSeries() {
+      if (!selectedStudent || !selectedPlan || sessions.length === 0) {
+        setSessionRatingSeries([])
+        return
+      }
+
+      try {
+        const series = await Promise.all(
+          sessions.map(async (session) => {
+            const tasks = await api(
+              `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`,
+            )
+            const ratedTasks = tasks.filter((task) => task.rating && ratingToScore[task.rating])
+            const averageScore = ratedTasks.length
+              ? ratedTasks.reduce((acc, task) => acc + ratingToScore[task.rating], 0) / ratedTasks.length
+              : null
+            const performancePercent = averageScore !== null ? Math.round(((averageScore - 1) / 2) * 100) : null
+
+            return {
+              sessionId: session.id,
+              sessionDate: session.session_date,
+              averageScore,
+              performancePercent,
+            }
+          }),
+        )
+        setSessionRatingSeries(series)
+      } catch {
+        setSessionRatingSeries([])
+      }
+    }
+
+    if (activeSection === 'sessions') {
+      buildSessionRatingSeries()
+    }
+  }, [activeSection, api, selectedPlan, selectedStudent, sessions])
+
+  useEffect(() => {
+    async function loadTodaySessions() {
+      if (!token) {
+        setTodaySessions([])
+        return
+      }
+
+      try {
+        const sessionsByDay = await api('/sessions/today')
+        setTodaySessions(sessionsByDay)
+      } catch {
+        setTodaySessions([])
+      }
+    }
+
+    loadTodaySessions()
+  }, [api, token, sessions, plans, students])
+
+  useEffect(() => {
+    async function refreshDashboardData() {
+      if (!token || activeSection !== 'overview') return
+      await Promise.all([loadStudents(), loadTaskTemplates()])
+    }
+
+    refreshDashboardData()
+  }, [activeSection, loadStudents, loadTaskTemplates, token])
 
   async function onRegister(e) {
     e.preventDefault()
@@ -256,14 +476,30 @@ function App() {
     const path = editingId ? `/students/${editingId}` : '/students'
     const method = editingId ? 'PUT' : 'POST'
 
+    const isCreating = !editingId
     try {
       await api(path, { method, body: JSON.stringify(studentForm) })
       setStudentForm(initialStudent)
       setEditingId(null)
+      setShowStudentModal(false)
       await loadStudents()
       setStatus('Estudiante guardado')
+      if (isCreating) {
+        setToast({
+          show: true,
+          type: 'success',
+          message: 'Estudiante registrado correctamente.',
+        })
+      }
     } catch (error) {
       setStatus(error.message)
+      if (isCreating) {
+        setToast({
+          show: true,
+          type: 'error',
+          message: error.message || 'No se pudo registrar el estudiante.',
+        })
+      }
     }
   }
 
@@ -279,6 +515,7 @@ function App() {
 
   function onEditStudent(student) {
     setEditingId(student.id)
+    setShowStudentModal(true)
     setStudentForm({
       full_name: student.full_name,
       rut: student.rut,
@@ -291,10 +528,17 @@ function App() {
     })
   }
 
+  function onOpenCreateStudentModal() {
+    setEditingId(null)
+    setStudentForm(initialStudent)
+    setShowStudentModal(true)
+  }
+
   async function onSelectStudent(student) {
     setSelectedStudent(student)
     setSelectedPlan(null)
     setSessions([])
+    setActiveSection('studentPlans')
     try {
       const data = await api(`/students/${student.id}/treatment-plans`)
       setPlans(data)
@@ -313,6 +557,7 @@ function App() {
         body: JSON.stringify({ year: Number(planForm.year) }),
       })
       await onSelectStudent(selectedStudent)
+      setShowPlanModal(false)
       setStatus('Plan anual creado')
     } catch (error) {
       setStatus(error.message)
@@ -356,6 +601,7 @@ function App() {
   async function onSelectPlan(plan) {
     if (!selectedStudent) return
     setSelectedPlan(plan)
+    setActiveSection('sessions')
     setEditingSessionId(null)
     setSelectedSession(null)
     setSessionTasks([])
@@ -366,15 +612,22 @@ function App() {
       description: '',
       rating: 'por_lograr',
     })
+    setTaskCreationMode('manual')
     setSessionForm({
       session_date: new Date().toISOString().slice(0, 10),
       objective: '',
       description: '',
-      status: 'draft',
+      status: 'pendiente',
     })
     try {
       const data = await api(`/students/${selectedStudent.id}/treatment-plans/${plan.id}/sessions`)
       setSessions(data)
+      if (data.length > 0) {
+        await onSelectSession(data[0])
+      } else {
+        setSelectedSession(null)
+        setSessionTasks([])
+      }
     } catch (error) {
       setStatus(error.message)
     }
@@ -389,8 +642,12 @@ function App() {
       : `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions`
 
     try {
-      await api(path, { method: isEditing ? 'PUT' : 'POST', body: JSON.stringify(sessionForm) })
+      const savedSession = await api(path, { method: isEditing ? 'PUT' : 'POST', body: JSON.stringify(sessionForm) })
       await onSelectPlan(selectedPlan)
+      if (savedSession?.id) {
+        await onSelectSession(savedSession)
+      }
+      setShowSessionModal(false)
       setStatus(isEditing ? 'Sesion actualizada' : 'Sesion creada')
     } catch (error) {
       setStatus(error.message)
@@ -399,12 +656,24 @@ function App() {
 
   function onEditSession(session) {
     setEditingSessionId(session.id)
+    setShowSessionModal(true)
     setSessionForm({
       session_date: session.session_date,
       objective: session.objective,
       description: session.description || '',
-      status: session.status,
+      status: session.status === 'draft' ? 'pendiente' : session.status,
     })
+  }
+
+  function onOpenCreateSessionModal() {
+    setEditingSessionId(null)
+    setSessionForm({
+      session_date: new Date().toISOString().slice(0, 10),
+      objective: '',
+      description: '',
+      status: 'pendiente',
+    })
+    setShowSessionModal(true)
   }
 
   async function onDeleteSession(sessionId) {
@@ -458,6 +727,7 @@ function App() {
   async function onSelectSession(session) {
     if (!selectedStudent || !selectedPlan) return
     setSelectedSession(session)
+    setActiveSection('sessionDetail')
     setEditingTaskId(null)
     setTaskForm({
       task_template_id: '',
@@ -465,6 +735,10 @@ function App() {
       description: '',
       rating: 'por_lograr',
     })
+    setSessionObservation(session.general_observation || '')
+    setSuspensionReason('estudiante_ausente')
+    setShowTaskModal(false)
+    setTaskCreationMode('manual')
 
     try {
       const data = await api(
@@ -479,41 +753,107 @@ function App() {
   async function onSaveSessionTask(e) {
     e.preventDefault()
     if (!selectedStudent || !selectedPlan || !selectedSession) return
-    const isEditing = Boolean(editingTaskId)
-    const path = isEditing
-      ? `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks/${editingTaskId}`
-      : `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks`
-
-    const payload = isEditing
-      ? {
-          name: taskForm.name,
-          description: taskForm.description,
-          rating: taskForm.rating,
-        }
-      : {
-          task_template_id: taskForm.task_template_id ? Number(taskForm.task_template_id) : null,
-          name: taskForm.name,
-          description: taskForm.description,
-          rating: taskForm.rating,
-        }
+    const path = `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks`
+    const payload = {
+      task_template_id:
+        taskCreationMode === 'import' && taskForm.task_template_id ? Number(taskForm.task_template_id) : null,
+      name: taskForm.name,
+      description: taskForm.description,
+      // Se crea sin evaluación aplicada; la calificación se registra después en la sesión.
+      rating: null,
+    }
 
     try {
-      await api(path, { method: isEditing ? 'PUT' : 'POST', body: JSON.stringify(payload) })
+      await api(path, { method: 'POST', body: JSON.stringify(payload) })
       await onSelectSession(selectedSession)
-      setStatus(isEditing ? 'Calificacion/tarea actualizada' : 'Tarea agregada a sesion')
+      setShowTaskModal(false)
+      setEditingTaskId(null)
+      setTaskCreationMode('manual')
+      setStatus('Tarea agregada a sesion')
     } catch (error) {
       setStatus(error.message)
     }
   }
 
-  function onEditSessionTask(task) {
-    setEditingTaskId(task.id)
-    setTaskForm({
-      task_template_id: task.task_template_id ? String(task.task_template_id) : '',
-      name: task.name,
-      description: task.description || '',
-      rating: task.rating,
-    })
+  async function onChangeSessionTaskRating(task, nextRating) {
+    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    try {
+      await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks/${task.id}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: task.name,
+            description: task.description || '',
+            rating: nextRating || null,
+          }),
+        },
+      )
+      await onSelectSession(selectedSession)
+      setStatus('Calificacion actualizada')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onUpdateSessionState({ status, generalObservation }, successMessage) {
+    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    try {
+      const updatedSession = await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            session_date: selectedSession.session_date,
+            objective: selectedSession.objective,
+            description: selectedSession.description || null,
+            general_observation: generalObservation,
+            status,
+          }),
+        },
+      )
+      setSelectedSession(updatedSession)
+      setSessionObservation(updatedSession.general_observation || '')
+      await onSelectPlan(selectedPlan)
+      await onSelectSession(updatedSession)
+      setActiveSection('sessionDetail')
+      setStatus(successMessage)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onFinalizeSession() {
+    if (!selectedSession) return
+    await onUpdateSessionState(
+      { status: 'finalizada', generalObservation: sessionObservation || null },
+      'Sesion finalizada',
+    )
+  }
+
+  async function onReopenSession() {
+    if (!selectedSession) return
+    await onUpdateSessionState(
+      { status: 'pendiente', generalObservation: sessionObservation || null },
+      'Sesion habilitada para edicion',
+    )
+  }
+
+  async function onSuspendSession() {
+    if (!selectedSession) return
+    const suspensionLabel =
+      suspensionReason === 'estudiante_ausente' ? 'Estudiante ausente' : 'Actividad escolar/suspension'
+    const generalObservationWithReason = [
+      sessionObservation?.trim() || null,
+      `Motivo de suspension: ${suspensionLabel}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    await onUpdateSessionState(
+      { status: 'suspendida', generalObservation: generalObservationWithReason },
+      'Sesion suspendida',
+    )
+    setShowSuspendModal(false)
   }
 
   async function onDeleteSessionTask(taskId) {
@@ -541,247 +881,1280 @@ function App() {
     })
   }
 
+  function onOpenCreateTaskModal() {
+    setEditingTaskId(null)
+    setTaskCreationMode('manual')
+    setTaskForm({
+      task_template_id: '',
+      name: '',
+      description: '',
+      rating: 'por_lograr',
+    })
+    setShowTaskModal(true)
+  }
+
+  function onOpenImportTaskModal() {
+    setEditingTaskId(null)
+    setTaskCreationMode('import')
+    setTaskForm({
+      task_template_id: '',
+      name: '',
+      description: '',
+      rating: 'por_lograr',
+    })
+    setShowTaskModal(true)
+  }
+
+  async function onOpenTodaySession(todaySessionItem) {
+    const { student, plan, session } = todaySessionItem
+    await onSelectStudent(student)
+    await onSelectPlan(plan)
+    await onSelectSession(session)
+  }
+
   const selectedLevel = levels.find((level) => String(level.id) === String(studentForm.school_level_id))
   const availableCourses = selectedLevel?.courses ?? []
+  const formatDisplayDate = (dateValue) => {
+    if (!dateValue) return '-'
+    const [year, month, day] = String(dateValue).split('-')
+    if (!year || !month || !day) return dateValue
+    return `${day}-${month}-${year}`
+  }
+  const currentYear = new Date().getFullYear()
+  const todayDate = new Date().toISOString().slice(0, 10)
+  const finalizedSessionsCount = sessions.filter((session) => session.status === 'finalizada').length
+  const pendingSessionsCount = sessions.filter((session) => session.status !== 'finalizada').length
+  const totalSessionsCount = sessions.length
+  const suspendedSessions = sessions.filter((session) => session.status === 'suspendida')
+  const sessionsUntilToday = sessions.filter((session) => session.session_date <= todayDate)
+  const finalizedSessionsUntilToday = sessionsUntilToday.filter((session) => session.status === 'finalizada').length
+  const absentSuspensionsUntilToday = sessionsUntilToday.filter(
+    (session) =>
+      session.status === 'suspendida' &&
+      (session.general_observation || '').toLowerCase().includes('estudiante ausente'),
+  ).length
+  const assistanceBase = finalizedSessionsUntilToday + absentSuspensionsUntilToday
+  const attendancePercent = assistanceBase > 0 ? Math.round((finalizedSessionsUntilToday / assistanceBase) * 100) : 0
+  const suspensionPercent = assistanceBase > 0 ? 100 - attendancePercent : 0
+  const suspensionByAbsent = suspendedSessions.filter((session) =>
+    (session.general_observation || '').toLowerCase().includes('estudiante ausente'),
+  ).length
+  const suspensionBySchool = suspendedSessions.filter((session) =>
+    (session.general_observation || '').toLowerCase().includes('actividad escolar/suspension'),
+  ).length
+  const unknownSuspensionReason = Math.max(suspendedSessions.length - suspensionByAbsent - suspensionBySchool, 0)
+  const attendancePieConic = `conic-gradient(#10b981 0% ${attendancePercent}%, #f59e0b ${attendancePercent}% 100%)`
+  const suspendedTotal = suspendedSessions.length
+  const suspendedAbsentPercent = suspendedTotal > 0 ? Math.round((suspensionByAbsent / suspendedTotal) * 100) : 0
+  const suspendedSchoolPercent = suspendedTotal > 0 ? Math.round((suspensionBySchool / suspendedTotal) * 100) : 0
+  const suspendedUnknownPercent = Math.max(100 - suspendedAbsentPercent - suspendedSchoolPercent, 0)
+  const suspensionPieConic = `conic-gradient(
+    #ef4444 0% ${suspendedAbsentPercent}%,
+    #8b5cf6 ${suspendedAbsentPercent}% ${suspendedAbsentPercent + suspendedSchoolPercent}%,
+    #94a3b8 ${suspendedAbsentPercent + suspendedSchoolPercent}% 100%
+  )`
+  const displaySessionStatus = (status) => (status === 'draft' ? 'pendiente' : status)
+  const getSuspensionReasonLabel = (generalObservation) => {
+    const normalized = (generalObservation || '').toLowerCase()
+    if (normalized.includes('estudiante ausente')) return 'ausente'
+    if (normalized.includes('actividad escolar/suspension')) return 'actividad escolar'
+    return ''
+  }
+  const displaySessionStatusLabel = (session) => {
+    const status = displaySessionStatus(session?.status)
+    if (status !== 'suspendida') return status
+    const reason = getSuspensionReasonLabel(session?.general_observation)
+    return reason ? `suspendida (${reason})` : 'suspendida'
+  }
+  const chartWidth = 720
+  const chartHeight = 220
+  const chartPadding = 28
+  const plottedSeries = sessionRatingSeries.filter((entry) => entry.averageScore !== null)
+  const chartPoints = plottedSeries.map((entry, index) => {
+    const x =
+      chartPadding +
+      (plottedSeries.length > 1
+        ? (index / (plottedSeries.length - 1)) * (chartWidth - chartPadding * 2)
+        : (chartWidth - chartPadding * 2) / 2)
+    const normalized = ((entry.averageScore - 1) / 2) * (chartHeight - chartPadding * 2)
+    const y = chartHeight - chartPadding - normalized
+    return { ...entry, x, y }
+  })
+  const polylinePoints = chartPoints.map((point) => `${point.x},${point.y}`).join(' ')
 
   return (
-    <main style={{ fontFamily: 'system-ui', maxWidth: 900, margin: '2rem auto', padding: '0 1rem' }}>
-      <h1>Sprint 1 - Auth + Estudiantes + Planes</h1>
-      <p><strong>Estado:</strong> {status}</p>
-
-      {!token && (
-        <>
-          <h2>Registro Profesional</h2>
-          <form onSubmit={onRegister}>
-            <input placeholder="Nombre" value={authForm.name} onChange={(e) => setAuthForm({ ...authForm, name: e.target.value })} />
-            <input placeholder="RUT" value={authForm.rut} onChange={(e) => setAuthForm({ ...authForm, rut: e.target.value })} />
-            <input placeholder="Email" value={authForm.email} onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
-            <input placeholder="Password" type="password" value={authForm.password} onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
-            <select value={authForm.profession_id} onChange={(e) => setAuthForm({ ...authForm, profession_id: e.target.value })}>
-              <option value="">Selecciona profesion</option>
-              {professions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-            <button>Registrarme</button>
-          </form>
-
-          <h2>Login</h2>
-          <form onSubmit={onLogin}>
-            <input placeholder="Email" value={loginForm.email} onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })} />
-            <input placeholder="Password" type="password" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} />
-            <button>Ingresar</button>
-          </form>
-
-          <h2>Recuperar contrasena</h2>
-          <form onSubmit={onForgotPassword}>
-            <input placeholder="Email" value={forgotForm.email} onChange={(e) => setForgotForm({ email: e.target.value })} />
-            <button>Enviar enlace</button>
-          </form>
-
-          <h2>Resetear contrasena</h2>
-          <form onSubmit={onResetPassword}>
-            <input placeholder="Token" value={resetForm.token} onChange={(e) => setResetForm({ ...resetForm, token: e.target.value })} />
-            <input placeholder="Email" value={resetForm.email} onChange={(e) => setResetForm({ ...resetForm, email: e.target.value })} />
-            <input placeholder="Nueva contrasena" type="password" value={resetForm.password} onChange={(e) => setResetForm({ ...resetForm, password: e.target.value })} />
-            <input placeholder="Confirmar contrasena" type="password" value={resetForm.password_confirmation} onChange={(e) => setResetForm({ ...resetForm, password_confirmation: e.target.value })} />
-            <button>Resetear</button>
-          </form>
-        </>
-      )}
+    <AppRouter
+      token={token}
+      authProps={{
+        authForm,
+        setAuthForm,
+        loginForm,
+        setLoginForm,
+        forgotForm,
+        setForgotForm,
+        resetForm,
+        setResetForm,
+        professions,
+        onRegister,
+        onLogin,
+        onForgotPassword,
+        onResetPassword,
+      }}
+    >
+      <main className={token ? 'min-h-screen w-full' : 'appShell'}>
+        {toast.show && (
+          <div className="fixed right-4 top-4 z-[60]">
+            <div
+              className={`min-w-[280px] rounded-[5px] border px-4 py-3 text-sm shadow-lg ${
+                toast.type === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-red-200 bg-red-50 text-red-800'
+              }`}
+              role="alert"
+              aria-live="assertive"
+            >
+              {toast.message}
+            </div>
+          </div>
+        )}
+        {!token && (
+          <div className="mb-4">
+            <p className="mb-2 text-sm font-medium text-slate-700"><strong>Estado de la API</strong></p>
+            <FeedbackMessage message={status} />
+          </div>
+        )}
 
       {token && (
-        <>
-          <button onClick={onLogout}>Cerrar sesion</button>
-          <h2>{editingTemplateId ? 'Editar tarea reutilizable' : 'Nueva tarea reutilizable'}</h2>
-          <form onSubmit={onSaveTemplate}>
-            <input
-              placeholder="Nombre de tarea"
-              value={templateForm.name}
-              onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
-            />
-            <input
-              placeholder="Descripcion de tarea"
-              value={templateForm.description}
-              onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
-            />
-            <button>{editingTemplateId ? 'Actualizar tarea' : 'Crear tarea'}</button>
-          </form>
-          <ul>
-            {taskTemplates.map((template) => (
-              <li key={template.id}>
-                {template.name}
-                <button onClick={() => onEditTemplate(template)}>Editar</button>
-                <button onClick={() => onDeleteTemplate(template.id)}>Eliminar</button>
-                <button onClick={() => onViewTemplateHistory(template.id)}>Ver historico</button>
-              </li>
-            ))}
-          </ul>
+        <section className="w-full">
+          <header className="w-full bg-gradient-to-r from-blue-700 to-indigo-700 px-4 py-3 text-white md:px-6">
+            <div className="flex w-full flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-white/15 text-sm font-bold text-white">
+                  MT
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">Mi App Terapias</p>
+                  <p className="text-xs text-blue-100">Dashboard profesional</p>
+                </div>
+              </div>
 
-          {taskHistory.length > 0 && (
-            <>
-              <h3>Historico de tarea reutilizable</h3>
-              <ul>
-                {taskHistory.map((entry) => (
-                  <li key={entry.id}>
-                    {entry.session?.treatment_plan?.student?.full_name} - {entry.session?.treatment_plan?.year} - {entry.session?.session_date}
-                    {' | '}Calificacion: {ratingOptions.find((option) => option.value === entry.rating)?.label || entry.rating}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-[5px] border border-white/40 bg-white/10 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                  onClick={onLogout}
+                >
+                  Cerrar sesion
+                </button>
+              </div>
+            </div>
+          </header>
 
-          <h2>{editingId ? 'Editar estudiante' : 'Nuevo estudiante'}</h2>
-          <form onSubmit={onSaveStudent}>
-            <input placeholder="Nombre completo" value={studentForm.full_name} onChange={(e) => setStudentForm({ ...studentForm, full_name: e.target.value })} />
-            <input placeholder="RUT" value={studentForm.rut} onChange={(e) => setStudentForm({ ...studentForm, rut: e.target.value })} />
-            <input placeholder="Diagnostico actual" value={studentForm.current_diagnosis} onChange={(e) => setStudentForm({ ...studentForm, current_diagnosis: e.target.value })} />
-            <select value={studentForm.school_level_id} onChange={(e) => setStudentForm({ ...studentForm, school_level_id: e.target.value, school_course_id: '' })}>
-              <option value="">Nivel</option>
-              {levels.map((l) => <option key={l.id} value={l.id}>{l.display_name}</option>)}
-            </select>
-            <select value={studentForm.school_course_id} onChange={(e) => setStudentForm({ ...studentForm, school_course_id: e.target.value })}>
-              <option value="">Curso</option>
-              {availableCourses.map((c) => <option key={c.id} value={c.id}>{c.display_name}</option>)}
-            </select>
-            <input placeholder="Nombre apoderado" value={studentForm.guardian_name} onChange={(e) => setStudentForm({ ...studentForm, guardian_name: e.target.value })} />
-            <input placeholder="Telefono apoderado" value={studentForm.guardian_phone} onChange={(e) => setStudentForm({ ...studentForm, guardian_phone: e.target.value })} />
-            <input placeholder="Email apoderado" value={studentForm.guardian_email} onChange={(e) => setStudentForm({ ...studentForm, guardian_email: e.target.value })} />
-            <button>{editingId ? 'Actualizar' : 'Crear'}</button>
-          </form>
+          <div className="grid min-h-[calc(100vh-76px)] w-full grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
+            <aside className="border-r border-slate-200 bg-white p-4">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Menu</h2>
+              <div className="flex flex-col gap-2">
+                <button
+                  className={`actionButton w-full text-left ${activeSection === 'overview' ? 'actionButtonPrimary' : ''}`}
+                  onClick={() => setActiveSection('overview')}
+                >
+                  Dashboard
+                </button>
+                <button
+                  className={`actionButton w-full text-left ${activeSection === 'students' ? 'actionButtonPrimary' : ''}`}
+                  onClick={() => setActiveSection('students')}
+                >
+                  Estudiantes
+                </button>
+                {selectedStudent && (
+                  <button
+                    className={`actionButton w-full text-left ${activeSection === 'studentPlans' ? 'actionButtonPrimary' : ''}`}
+                    onClick={() => setActiveSection('studentPlans')}
+                  >
+                    Planes de tratamiento del estudiante
+                  </button>
+                )}
+                {selectedPlan && (
+                  <button
+                    className={`actionButton w-full text-left ${activeSection === 'sessions' ? 'actionButtonPrimary' : ''}`}
+                    onClick={() => setActiveSection('sessions')}
+                  >
+                    Sesiones
+                  </button>
+                )}
+                {selectedSession && (
+                  <button
+                    className={`actionButton w-full text-left ${activeSection === 'sessionDetail' ? 'actionButtonPrimary' : ''}`}
+                    onClick={() => setActiveSection('sessionDetail')}
+                  >
+                    Sesión activa
+                  </button>
+                )}
+                <button
+                  className={`actionButton w-full text-left ${activeSection === 'tasks' ? 'actionButtonPrimary' : ''}`}
+                  onClick={() => setActiveSection('tasks')}
+                >
+                  Tareas
+                </button>
+              </div>
+            </aside>
 
-          <h2>Estudiantes</h2>
-          <ul>
-            {students.map((student) => (
-              <li key={student.id}>
-                {student.full_name} - {student.course?.display_name}
-                <button onClick={() => onEditStudent(student)}>Editar</button>
-                <button onClick={() => onDeleteStudent(student.id)}>Eliminar</button>
-                <button onClick={() => onSelectStudent(student)}>Ver planes</button>
-              </li>
-            ))}
-          </ul>
+            <main className="space-y-4 bg-slate-100 p-4 md:p-6">
+              {selectedStudent && ['studentPlans'].includes(activeSection) && (
+                <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-base font-semibold text-slate-900">Contexto activo</h2>
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-3">
+                    <p><strong>Estudiante:</strong> {selectedStudent.full_name}</p>
+                    <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
+                    <p><strong>RUT:</strong> {selectedStudent.rut}</p>
+                    <p><strong>Apoderado:</strong> {selectedStudent.guardian_name}</p>
+                    {selectedPlan && (
+                      <>
+                        <p><strong>Plan de tratamiento:</strong> {selectedPlan.year}</p>
+                        <p><strong>Diagnóstico del plan de tratamiento:</strong> {selectedPlan.diagnosis_snapshot}</p>
+                      </>
+                    )}
+                    {selectedSession && activeSection === 'sessionDetail' && (
+                      <>
+                        <p><strong>Sesión:</strong> {formatDisplayDate(selectedSession.session_date)}</p>
+                        <p><strong>Objetivo sesión:</strong> {selectedSession.objective}</p>
+                        <p className="xl:col-span-3">
+                          <strong>Descripción sesión:</strong> {selectedSession.description || 'Sin descripción'}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </section>
+              )}
 
-          {selectedStudent && (
-            <>
-              <h2>Planes anuales de {selectedStudent.full_name}</h2>
-              <p><strong>Diagnostico actual:</strong> {selectedStudent.current_diagnosis}</p>
-              <form onSubmit={onCreatePlan}>
-                <input
-                  type="number"
-                  min="2000"
-                  max="2100"
-                  value={planForm.year}
-                  onChange={(e) => setPlanForm({ year: e.target.value })}
-                />
-                <button>Crear plan</button>
-              </form>
-              <ul>
-                {plans.map((plan) => (
-                  <li key={plan.id}>
-                    {selectedStudent.full_name} - {selectedStudent.course?.display_name} - {plan.year}
-                    {' | '}Diagnostico snapshot: {plan.diagnosis_snapshot}
-                    <button onClick={() => onSelectPlan(plan)}>Ver sesiones</button>
-                    <button onClick={() => onDeletePlan(plan.id)}>Eliminar plan</button>
-                    <button onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}>PDF consolidado</button>
-                  </li>
-                ))}
-              </ul>
-
-              {selectedPlan && (
+              {activeSection === 'overview' && (
                 <>
-                  <h3>Sesiones del plan {selectedPlan.year}</h3>
-                  <form onSubmit={onSaveSession}>
-                    <input
-                      type="date"
-                      value={sessionForm.session_date}
-                      onChange={(e) => setSessionForm({ ...sessionForm, session_date: e.target.value })}
-                    />
-                    <input
-                      placeholder="Objetivo"
-                      value={sessionForm.objective}
-                      onChange={(e) => setSessionForm({ ...sessionForm, objective: e.target.value })}
-                    />
-                    <input
-                      placeholder="Descripcion"
-                      value={sessionForm.description}
-                      onChange={(e) => setSessionForm({ ...sessionForm, description: e.target.value })}
-                    />
-                    <select
-                      value={sessionForm.status}
-                      onChange={(e) => setSessionForm({ ...sessionForm, status: e.target.value })}
-                    >
-                      <option value="draft">Borrador</option>
-                      <option value="finalizada">Finalizada</option>
-                    </select>
-                    <button>{editingSessionId ? 'Actualizar sesion' : 'Crear sesion'}</button>
-                  </form>
-                  <ul>
-                    {sessions.map((session) => (
-                      <li key={session.id}>
-                        Sesion {session.id} - {session.session_date} - {session.status}
-                        {' | '}Objetivo: {session.objective}
-                        <button onClick={() => onEditSession(session)}>Editar</button>
-                        <button onClick={() => onDeleteSession(session.id)}>Eliminar</button>
-                        <button onClick={() => onSelectSession(session)}>Ver tareas</button>
-                        <button onClick={() => onDownloadSessionPdf(session.id)}>PDF sesion</button>
-                        <button onClick={() => onSendSessionReport(session.id)}>Enviar por correo</button>
-                      </li>
-                    ))}
-                  </ul>
+                  <section className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estudiantes</p>
+                      <p className="mt-1 text-xl font-bold text-slate-900">{students.length}</p>
+                      <p className="mt-1 text-xs text-slate-500">Total registrados</p>
+                    </article>
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Planes de tratamiento</p>
+                      <p className="mt-1 text-xl font-bold text-slate-900">{plans.length}</p>
+                      <p className="mt-1 text-xs text-slate-500">Año actual: {currentYear}</p>
+                    </article>
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sesiones finalizadas</p>
+                      <p className="mt-1 text-xl font-bold text-emerald-600">{finalizedSessionsCount}</p>
+                      <p className="mt-1 text-xs text-slate-500">Dentro del plan de tratamiento seleccionado</p>
+                    </article>
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sesiones pendientes</p>
+                      <p className="mt-1 text-xl font-bold text-amber-600">{pendingSessionsCount}</p>
+                      <p className="mt-1 text-xs text-slate-500">Requieren gestion</p>
+                    </article>
+                  </section>
 
-                  {selectedSession && (
-                    <>
-                      <h4>Tareas de sesion {selectedSession.session_date}</h4>
-                      <form onSubmit={onSaveSessionTask}>
-                        {!editingTaskId && (
+                  <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <h2 className="text-base font-semibold text-slate-900">Resumen operativo</h2>
+                    <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                      <div className="rounded-[5px] bg-slate-50 p-3 text-sm text-slate-700">
+                        Biblioteca de tareas: <strong>{taskTemplates.length}</strong>
+                      </div>
+                      <div className="rounded-[5px] bg-slate-50 p-3 text-sm text-slate-700">
+                        Historico de tareas: <strong>{taskHistory.length}</strong>
+                      </div>
+                      <div className="rounded-[5px] bg-slate-50 p-3 text-sm text-slate-700">
+                        Sesiones del plan de tratamiento activo: <strong>{sessions.length}</strong>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h2 className="text-base font-semibold text-slate-900">Sesiones para hoy</h2>
+                      <span className="text-xs text-slate-500">{formatDisplayDate(new Date().toISOString().slice(0, 10))}</span>
+                    </div>
+                    {todaySessions.length === 0 ? (
+                      <p className="text-sm text-slate-500">No hay sesiones agendadas para hoy.</p>
+                    ) : (
+                      <div className="overflow-x-auto rounded-[5px] border border-slate-200">
+                        <table className="min-w-full divide-y divide-slate-200 text-sm">
+                          <thead className="bg-slate-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Estudiante</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Plan</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Objetivo</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Estado</th>
+                              <th className="px-3 py-2 text-right font-semibold text-slate-600">Acción</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {todaySessions.map((item) => (
+                              <tr key={`${item.student.id}-${item.plan.id}-${item.session.id}`} className="hover:bg-slate-50">
+                                <td className="px-3 py-2 text-slate-700">{item.student.full_name}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.plan.year}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.session.objective}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`rounded-[5px] px-2 py-1 text-xs font-semibold ${
+                                    displaySessionStatus(item.session.status) === 'finalizada'
+                                      ? 'bg-emerald-100 text-emerald-700'
+                                      : displaySessionStatus(item.session.status) === 'suspendida'
+                                        ? 'bg-rose-100 text-rose-700'
+                                        : 'bg-amber-100 text-amber-700'
+                                  }`}>
+                                    {displaySessionStatusLabel(item.session)}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <button
+                                    className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+                                    onClick={() => onOpenTodaySession(item)}
+                                  >
+                                    👁️ Ver sesión
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+                </>
+              )}
+
+            {activeSection === 'tasks' && (
+              <section className="sectionCard">
+                <h2 className="sectionTitle">{editingTemplateId ? 'Editar tarea reutilizable' : 'Nueva tarea reutilizable'}</h2>
+                <form onSubmit={onSaveTemplate}>
+                  <input
+                    placeholder="Nombre de tarea"
+                    value={templateForm.name}
+                    onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+                  />
+                  <input
+                    placeholder="Descripcion de tarea"
+                    value={templateForm.description}
+                    onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
+                  />
+                  <button>{editingTemplateId ? 'Actualizar tarea' : 'Crear tarea'}</button>
+                </form>
+                <ul>
+                  {taskTemplates.map((template) => (
+                    <li key={template.id}>
+                      {template.name}
+                      <button onClick={() => onEditTemplate(template)}>Editar</button>
+                      <button onClick={() => onDeleteTemplate(template.id)}>Eliminar</button>
+                      <button onClick={() => onViewTemplateHistory(template.id)}>Ver historico</button>
+                    </li>
+                  ))}
+                </ul>
+
+                {taskHistory.length > 0 && (
+                  <>
+                    <h3 className="mt-4 text-base font-semibold text-slate-900">Historico de tarea reutilizable</h3>
+                    <ul>
+                      {taskHistory.map((entry) => (
+                        <li key={entry.id}>
+                          {entry.session?.treatment_plan?.student?.full_name} - {entry.session?.treatment_plan?.year} - {formatDisplayDate(entry.session?.session_date)}
+                          {' | '}Calificacion: {ratingOptions.find((option) => option.value === entry.rating)?.label || entry.rating}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </section>
+            )}
+
+            {activeSection === 'students' && (
+              <>
+                <section className="sectionCard">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="sectionTitle mb-0">Estudiantes</h2>
+                    <button className="actionButton actionButtonPrimary" onClick={onOpenCreateStudentModal}>
+                      Registrar estudiante
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto rounded-[5px] border border-slate-200">
+                    <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Estudiante</th>
+                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Curso</th>
+                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Diagnóstico</th>
+                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Apoderado</th>
+                          <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {students.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                              No hay estudiantes registrados.
+                            </td>
+                          </tr>
+                        )}
+                        {students.map((student) => (
+                          <tr key={student.id} className="hover:bg-slate-50">
+                            <td className="px-3 py-3">
+                              <p className="font-medium text-slate-900">{student.full_name}</p>
+                              <p className="text-xs text-slate-500">RUT: {student.rut}</p>
+                            </td>
+                            <td className="px-3 py-3 text-slate-700">{student.course?.display_name || 'Sin curso'}</td>
+                            <td className="px-3 py-3 text-slate-700">{student.current_diagnosis}</td>
+                            <td className="px-3 py-3">
+                              <p className="text-slate-700">{student.guardian_name}</p>
+                              <p className="text-xs text-slate-500">{student.guardian_email}</p>
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <button
+                                  className="rounded-[5px] border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                                  onClick={() => onEditStudent(student)}
+                                >
+                                  ✏️ Editar
+                                </button>
+                                <button
+                                  className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+                                  onClick={() => onSelectStudent(student)}
+                                >
+                                  📋 Planes de tratamiento
+                                </button>
+                                <button
+                                  className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                  onClick={() => onDeleteStudent(student.id)}
+                                >
+                                  🗑️ Eliminar
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                </section>
+              </>
+            )}
+            {activeSection === 'studentPlans' && selectedStudent && (
+              <section className="sectionCard">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="sectionTitle mb-0">Planes de tratamiento del estudiante</h2>
+                  <div className="flex items-center gap-2">
+                    <button className="actionButton actionButtonPrimary" onClick={() => setShowPlanModal(true)}>
+                      Crear plan de tratamiento
+                    </button>
+                    <button className="actionButton" onClick={() => setActiveSection('students')}>
+                      Volver a estudiantes
+                    </button>
+                  </div>
+                </div>
+
+                <section className="rounded-[5px] border border-slate-200 bg-slate-50 p-4">
+                  <h3 className="text-lg font-semibold text-slate-900">Información del estudiante</h3>
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-3">
+                    <p><strong>Nombre:</strong> {selectedStudent.full_name}</p>
+                    <p><strong>RUT:</strong> {selectedStudent.rut}</p>
+                    <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
+                    <p><strong>Diagnóstico actual:</strong> {selectedStudent.current_diagnosis}</p>
+                    <p><strong>Apoderado:</strong> {selectedStudent.guardian_name}</p>
+                    <p><strong>Correo apoderado:</strong> {selectedStudent.guardian_email}</p>
+                  </div>
+                </section>
+
+                <div className="overflow-x-auto rounded-[5px] border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Año</th>
+                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Diagnóstico snapshot</th>
+                        <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {plans.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
+                            No hay planes de tratamiento registrados para este estudiante.
+                          </td>
+                        </tr>
+                      )}
+                      {plans.map((plan) => (
+                        <tr key={plan.id} className="hover:bg-slate-50">
+                          <td className="px-3 py-3 font-medium text-slate-900">{plan.year}</td>
+                          <td className="px-3 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button
+                                className="rounded-[5px] border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                                onClick={() => onSelectPlan(plan)}
+                              >
+                                📘 Sesiones
+                              </button>
+                              <button
+                                className="rounded-[5px] border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+                                onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}
+                              >
+                                📄 PDF
+                              </button>
+                              <button
+                                className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                onClick={() => onDeletePlan(plan.id)}
+                              >
+                                🗑️ Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+              </section>
+            )}
+            {activeSection === 'sessions' && selectedStudent && selectedPlan && (
+              <section className="sectionCard">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="sectionTitle mb-0">Sesiones del plan de tratamiento {selectedPlan.year}</h2>
+                  <div className="flex items-center gap-2">
+                    <button className="actionButton actionButtonPrimary" onClick={onOpenCreateSessionModal}>
+                      Crear sesión
+                    </button>
+                    <button className="actionButton" onClick={() => setActiveSection('studentPlans')}>
+                      Volver a planes de tratamiento
+                    </button>
+                  </div>
+                </div>
+
+                <section className="rounded-[5px] border border-slate-200 bg-slate-50 p-4">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm lg:col-span-1">
+                      <h3 className="text-base font-semibold text-slate-900">Información del estudiante</h3>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <p><strong>Nombre:</strong> {selectedStudent.full_name}</p>
+                        <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
+                        <p><strong>Diagnóstico:</strong> {selectedStudent.current_diagnosis}</p>
+                        <p><strong>Apoderado:</strong> {selectedStudent.guardian_name}</p>
+                        <p><strong>Correo:</strong> {selectedStudent.guardian_email}</p>
+                        <p><strong>Teléfono:</strong> {selectedStudent.guardian_phone || 'Sin teléfono'}</p>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asistencia</p>
+                          <div className="mt-2 flex items-center gap-3">
+                            <div className="relative h-20 w-20 rounded-full" style={{ background: attendancePieConic }}>
+                              <div className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+                            </div>
+                            <div className="space-y-1 text-xs text-slate-700">
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />Asistencia: <strong>{attendancePercent}%</strong></p>
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />Inasistencia: <strong>{suspensionPercent}%</strong></p>
+                              <p className="pt-1 text-slate-500">Base: {finalizedSessionsUntilToday}/{assistanceBase || 0}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Motivos de suspensión</p>
+                          {suspendedTotal === 0 ? (
+                            <p className="mt-2 text-xs text-slate-500">Sin sesiones suspendidas.</p>
+                          ) : (
+                            <div className="mt-2 flex items-center gap-3">
+                              <div className="relative h-20 w-20 rounded-full" style={{ background: suspensionPieConic }}>
+                                <div className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+                              </div>
+                              <div className="space-y-1 text-xs text-slate-700">
+                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-red-500" />Ausente: <strong>{suspensionByAbsent}</strong></p>
+                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-violet-500" />Actividad: <strong>{suspensionBySchool}</strong></p>
+                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Sin motivo: <strong>{unknownSuspensionReason}</strong></p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2">
+                      <h3 className="text-base font-semibold text-slate-900">Gráfico de sesiones</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Rendimiento porcentual por sesión basado en las calificaciones de tareas.
+                      </p>
+                      <div className="mt-4 rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                        {chartPoints.length > 0 ? (
+                          <div className="overflow-x-auto">
+                            <svg
+                              className="session-chart min-w-[640px]"
+                              viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                              role="img"
+                              aria-label="Gráfico lineal de promedio de calificaciones por sesión"
+                            >
+                              <line x1={chartPadding} y1={chartHeight - chartPadding} x2={chartWidth - chartPadding} y2={chartHeight - chartPadding} stroke="#cbd5e1" strokeWidth="1" />
+                              <line x1={chartPadding} y1={chartPadding} x2={chartPadding} y2={chartHeight - chartPadding} stroke="#cbd5e1" strokeWidth="1" />
+                              <line x1={chartPadding} y1={chartHeight - chartPadding} x2={chartWidth - chartPadding} y2={chartHeight - chartPadding} stroke="#fde68a" strokeWidth="1" strokeDasharray="4 4" />
+                              <line x1={chartPadding} y1={chartHeight / 2} x2={chartWidth - chartPadding} y2={chartHeight / 2} stroke="#fde68a" strokeWidth="1" strokeDasharray="4 4" />
+                              <line x1={chartPadding} y1={chartPadding} x2={chartWidth - chartPadding} y2={chartPadding} stroke="#fde68a" strokeWidth="1" strokeDasharray="4 4" />
+                              <polyline
+                                className="session-chart-line"
+                                fill="none"
+                                stroke="#2563eb"
+                                strokeWidth="2.5"
+                                points={polylinePoints}
+                              />
+                              {chartPoints.map((point) => (
+                                <g key={point.sessionId}>
+                                  <circle
+                                    className="session-chart-point"
+                                    cx={point.x}
+                                    cy={point.y}
+                                    r="5.5"
+                                    fill="#2563eb"
+                                    stroke="#ffffff"
+                                    strokeWidth="2"
+                                  >
+                                    <title>{`${point.sessionDate}: ${point.performancePercent}%`}</title>
+                                  </circle>
+                                  <text x={point.x} y={chartHeight - 8} textAnchor="middle" fontSize="10" fill="#475569">
+                                    {formatDisplayDate(point.sessionDate)}
+                                  </text>
+                                </g>
+                              ))}
+                              <text x={8} y={chartPadding + 2} fontSize="10" fill="#475569">100%</text>
+                              <text x={8} y={chartHeight / 2 + 2} fontSize="10" fill="#475569">50%</text>
+                              <text x={8} y={chartHeight - chartPadding + 2} fontSize="10" fill="#475569">0%</text>
+                            </svg>
+                          </div>
+                        ) : (
+                          <div className="flex min-h-[180px] items-center justify-center text-sm text-slate-500">
+                            Sin calificaciones registradas para graficar.
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  </div>
+
+                  <p className="mt-4 rounded-[5px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                    Sesiones finalizadas: <strong>{finalizedSessionsCount}</strong> - Sesiones pendientes: <strong>{pendingSessionsCount}</strong>
+                  </p>
+                </section>
+
+                <div className="overflow-x-auto rounded-[5px] border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Fecha</th>
+                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Objetivo</th>
+                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Estado</th>
+                        <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {sessions.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                            No hay sesiones registradas para este plan de tratamiento.
+                          </td>
+                        </tr>
+                      )}
+                      {sessions.map((session) => (
+                        <tr key={session.id} className="hover:bg-slate-50">
+                          <td className="px-3 py-3 text-slate-700">{formatDisplayDate(session.session_date)}</td>
+                          <td className="px-3 py-3 text-slate-700">{session.objective}</td>
+                          <td className="px-3 py-3">
+                            <span className={`rounded-[5px] px-2 py-1 text-xs font-semibold ${
+                              displaySessionStatus(session.status) === 'finalizada'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : displaySessionStatus(session.status) === 'suspendida'
+                                  ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-amber-100 text-amber-700'
+                            }`}>
+                              {displaySessionStatusLabel(session)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button
+                                className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+                                onClick={() => onSelectSession(session)}
+                              >
+                                👁️ Ver sesión
+                              </button>
+                              <button
+                                className="rounded-[5px] border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                                onClick={() => onEditSession(session)}
+                              >
+                                ✏️ Editar
+                              </button>
+                              {displaySessionStatus(session.status) === 'finalizada' && (
+                                <button
+                                  className="rounded-[5px] border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+                                  onClick={() => onDownloadSessionPdf(session.id)}
+                                >
+                                  📄 PDF
+                                </button>
+                              )}
+                              {displaySessionStatus(session.status) === 'pendiente' && (
+                                <button
+                                  className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                  onClick={() => onDeleteSession(session.id)}
+                                >
+                                  🗑️ Eliminar
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+              </section>
+            )}
+            {activeSection === 'sessionDetail' && selectedStudent && selectedPlan && selectedSession && (
+              <section className="sectionCard">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="sectionTitle mb-0">Sesión del {formatDisplayDate(selectedSession.session_date)}</h2>
+                    {selectedSession.status === 'finalizada' && (
+                      <span className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700">
+                        Sesión finalizada
+                      </span>
+                    )}
+                  </div>
+                  <button className="actionButton cursor-pointer" onClick={() => setActiveSection('sessions')}>
+                    Volver a sesiones
+                  </button>
+                </div>
+
+                <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                  <h4 className="text-base font-semibold text-slate-900">Información general</h4>
+                  <div className="mt-3 grid grid-cols-1 gap-4 text-sm text-slate-700 lg:grid-cols-2">
+                    <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Sesión</p>
+                      <div className="space-y-2">
+                        <p><strong>Fecha:</strong> {formatDisplayDate(selectedSession.session_date)}</p>
+                        <p><strong>Estado:</strong> {selectedSession.status}</p>
+                        <p><strong>Objetivo:</strong> {selectedSession.objective}</p>
+                        <p><strong>Descripción:</strong> {selectedSession.description || 'Sin descripción'}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Estudiante</p>
+                      <div className="space-y-2">
+                        <p><strong>Nombre:</strong> {selectedStudent.full_name}</p>
+                        <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
+                        <p><strong>RUT:</strong> {selectedStudent.rut}</p>
+                        <p><strong>Plan de tratamiento:</strong> {selectedPlan.year}</p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className={`mt-4 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
+                  selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
+                }`}>
+                  <h4 className="text-base font-semibold text-slate-900">Crear tarea para la sesión</h4>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Primero crea o importa la tarea. La calificación se aplica cuando el profesional la ejecuta con el estudiante.
+                  </p>
+                  {selectedSession.status === 'finalizada' && (
+                    <p className="mt-2 rounded-[5px] border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                      Contenido bloqueado: la sesión está finalizada.
+                    </p>
+                  )}
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={`actionButton actionButtonPrimary ${
+                        selectedSession.status === 'finalizada' ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                      }`}
+                      onClick={onOpenCreateTaskModal}
+                      disabled={selectedSession.status === 'finalizada'}
+                    >
+                      Crear tarea
+                    </button>
+                    <button
+                      type="button"
+                      className={`actionButton ${
+                        selectedSession.status === 'finalizada' ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                      }`}
+                      onClick={onOpenImportTaskModal}
+                      disabled={selectedSession.status === 'finalizada'}
+                    >
+                      Importar tarea
+                    </button>
+                  </div>
+
+                  <div className="mt-4 overflow-x-auto rounded-[5px] border border-slate-200">
+                    <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Tarea</th>
+                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Descripción</th>
+                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Calificación</th>
+                          <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sessionTasks.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                              Esta sesión no tiene tareas creadas.
+                            </td>
+                          </tr>
+                        )}
+                        {sessionTasks.map((task) => (
+                          <tr key={task.id} className="hover:bg-slate-50">
+                            <td className="px-3 py-3 text-slate-700">{task.name}</td>
+                            <td className="px-3 py-3 text-slate-700">{task.description || 'Sin descripción'}</td>
+                            <td className="px-3 py-3 text-slate-700">
+                              <select
+                                className={`fieldInput mb-0 min-w-[210px] ${
+                                  selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'cursor-pointer'
+                                }`}
+                                value={task.rating || ''}
+                                onChange={(e) => onChangeSessionTaskRating(task, e.target.value)}
+                                aria-label={`Calificacion de ${task.name}`}
+                                disabled={selectedSession.status === 'finalizada'}
+                              >
+                                <option value="">Calificar</option>
+                                {ratingOptions.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.dot} {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <button
+                                  className="cursor-pointer rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                  onClick={() => onDeleteSessionTask(task.id)}
+                                >
+                                  🗑️ Eliminar
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className={`mt-4 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
+                  selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
+                }`}>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Observación general de la sesión
+                  </label>
+                  <textarea
+                    className={`fieldInput mb-0 min-h-24 ${
+                      selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''
+                    }`}
+                    placeholder="Observaciones generales de la sesión..."
+                    value={sessionObservation}
+                    onChange={(e) => setSessionObservation(e.target.value)}
+                    disabled={selectedSession.status === 'finalizada'}
+                  />
+                </section>
+
+                <section className="mt-4 flex flex-wrap items-center gap-2">
+                  {selectedSession.status === 'finalizada' ? (
+                    <button type="button" className="actionButton actionButtonPrimary cursor-pointer" onClick={onReopenSession}>
+                      Volver a editar
+                    </button>
+                  ) : (
+                    <button type="button" className="actionButton actionButtonPrimary cursor-pointer" onClick={onFinalizeSession}>
+                      Finalizar sesión
+                    </button>
+                  )}
+                  {selectedSession.status !== 'finalizada' && (
+                    <button type="button" className="actionButton cursor-pointer" onClick={() => setShowSuspendModal(true)}>
+                      Suspender sesión
+                    </button>
+                  )}
+                  {selectedSession.status === 'finalizada' && (
+                    <button
+                      type="button"
+                      className="actionButton cursor-pointer"
+                      onClick={() => onDownloadSessionPdf(selectedSession.id)}
+                    >
+                      Generar PDF
+                    </button>
+                  )}
+                </section>
+              </section>
+            )}
+            {isTaskModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showTaskModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setShowTaskModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-xl rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showTaskModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">
+                        {taskCreationMode === 'import' ? 'Importar tarea' : 'Crear tarea'}
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {taskCreationMode === 'import'
+                          ? 'Selecciona una plantilla y ajusta los datos antes de guardar.'
+                          : 'Registra nombre y descripción de la tarea para esta sesión.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowTaskModal(false)}
+                      aria-label="Cerrar modal"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <form onSubmit={onSaveSessionTask}>
+                    <div className="space-y-3 px-5 py-4">
+                      {taskCreationMode === 'import' && (
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Plantilla
+                          </label>
                           <select
+                            className="fieldInput mb-0"
                             value={taskForm.task_template_id}
                             onChange={(e) => onTemplateSelectionChange(e.target.value)}
                           >
-                            <option value="">Sin plantilla</option>
+                            <option value="">Selecciona una plantilla</option>
                             {taskTemplates.map((template) => (
                               <option key={template.id} value={template.id}>{template.name}</option>
                             ))}
                           </select>
-                        )}
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Nombre
+                        </label>
                         <input
+                          className="fieldInput mb-0"
                           placeholder="Nombre de tarea"
                           value={taskForm.name}
                           onChange={(e) => setTaskForm({ ...taskForm, name: e.target.value })}
                         />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Descripción
+                        </label>
                         <input
-                          placeholder="Descripcion"
+                          className="fieldInput mb-0"
+                          placeholder="Descripción"
                           value={taskForm.description}
                           onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
                         />
-                        <select
-                          value={taskForm.rating}
-                          onChange={(e) => setTaskForm({ ...taskForm, rating: e.target.value })}
-                        >
-                          {ratingOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                      <button type="button" className="actionButton" onClick={() => setShowTaskModal(false)}>
+                        Cancelar
+                      </button>
+                      <button className="actionButton actionButtonPrimary">Guardar tarea</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+            {isSuspendModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showSuspendModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setShowSuspendModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-lg rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showSuspendModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Suspender sesión</h2>
+                      <p className="mt-1 text-sm text-slate-500">Selecciona el motivo de suspensión.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowSuspendModal(false)}
+                      aria-label="Cerrar modal"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-5 py-4">
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Motivo
+                    </label>
+                    <select
+                      className="fieldInput mb-0"
+                      value={suspensionReason}
+                      onChange={(e) => setSuspensionReason(e.target.value)}
+                    >
+                      <option value="estudiante_ausente">Estudiante ausente</option>
+                      <option value="actividad_escolar_suspension">Actividad escolar/suspensión</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                    <button type="button" className="actionButton" onClick={() => setShowSuspendModal(false)}>
+                      Cancelar
+                    </button>
+                    <button type="button" className="actionButton actionButtonPrimary" onClick={onSuspendSession}>
+                      Confirmar suspensión
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {isPlanModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showPlanModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setShowPlanModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-xl rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showPlanModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Crear plan de tratamiento</h2>
+                      <p className="mt-1 text-sm text-slate-500">Define el año académico para el nuevo plan de tratamiento.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowPlanModal(false)}
+                      aria-label="Cerrar modal"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <form onSubmit={onCreatePlan}>
+                    <div className="px-5 py-4">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="plan-year">Año</label>
+                      <input
+                        id="plan-year"
+                        className="fieldInput mb-0"
+                        type="number"
+                        min="2000"
+                        max="2100"
+                        value={planForm.year}
+                        onChange={(e) => setPlanForm({ year: e.target.value })}
+                      />
+                    </div>
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                      <button type="button" className="actionButton" onClick={() => setShowPlanModal(false)}>
+                        Cancelar
+                      </button>
+                      <button className="actionButton actionButtonPrimary">Crear plan de tratamiento</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+            {isSessionModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showSessionModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setShowSessionModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-2xl rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showSessionModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">{editingSessionId ? 'Editar sesión' : 'Crear sesión'}</h2>
+                      <p className="mt-1 text-sm text-slate-500">Completa los datos principales de la sesión.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowSessionModal(false)}
+                      aria-label="Cerrar modal"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <form onSubmit={onSaveSession}>
+                    <div className="grid gap-3 px-5 py-4">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="session-date">Fecha</label>
+                        <input
+                          id="session-date"
+                          className="fieldInput mb-0"
+                          type="date"
+                          value={sessionForm.session_date}
+                          onChange={(e) => setSessionForm({ ...sessionForm, session_date: e.target.value })}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="session-objective">Objetivo</label>
+                        <input
+                          id="session-objective"
+                          className="fieldInput mb-0"
+                          placeholder="Objetivo de la sesión"
+                          value={sessionForm.objective}
+                          onChange={(e) => setSessionForm({ ...sessionForm, objective: e.target.value })}
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="session-description">Descripción</label>
+                        <input
+                          id="session-description"
+                          className="fieldInput mb-0"
+                          placeholder="Descripción"
+                          value={sessionForm.description}
+                          onChange={(e) => setSessionForm({ ...sessionForm, description: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                      <button type="button" className="actionButton" onClick={() => setShowSessionModal(false)}>
+                        Cancelar
+                      </button>
+                      <button className="actionButton actionButtonPrimary">
+                        {editingSessionId ? 'Actualizar sesión' : 'Crear sesión'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+            {isStudentModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showStudentModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setShowStudentModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-3xl rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showStudentModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">{editingId ? 'Editar estudiante' : 'Registrar estudiante'}</h2>
+                      <p className="mt-1 text-sm text-slate-500">Completa los datos del estudiante y su contacto de apoderado.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowStudentModal(false)}
+                      aria-label="Cerrar modal"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <form onSubmit={onSaveStudent}>
+                    <div className="grid gap-3 px-5 py-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-full-name">Nombre completo</label>
+                        <input id="student-full-name" className="fieldInput mb-0" placeholder="Nombre completo" value={studentForm.full_name} onChange={(e) => setStudentForm({ ...studentForm, full_name: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-rut">RUT</label>
+                        <input id="student-rut" className="fieldInput mb-0" placeholder="11.111.111-1" value={studentForm.rut} onChange={(e) => setStudentForm({ ...studentForm, rut: e.target.value })} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-diagnosis">Diagnóstico actual</label>
+                        <input id="student-diagnosis" className="fieldInput mb-0" placeholder="Diagnóstico actual" value={studentForm.current_diagnosis} onChange={(e) => setStudentForm({ ...studentForm, current_diagnosis: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-level">Nivel</label>
+                        <select id="student-level" className="fieldInput mb-0" value={studentForm.school_level_id} onChange={(e) => setStudentForm({ ...studentForm, school_level_id: e.target.value, school_course_id: '' })}>
+                          <option value="">Nivel</option>
+                          {levels.map((l) => <option key={l.id} value={l.id}>{l.display_name}</option>)}
                         </select>
-                        <button>{editingTaskId ? 'Actualizar tarea' : 'Agregar tarea a sesion'}</button>
-                      </form>
-                      <ul>
-                        {sessionTasks.map((task) => (
-                          <li key={task.id}>
-                            {task.name} - {ratingOptions.find((option) => option.value === task.rating)?.label || task.rating}
-                            <button onClick={() => onEditSessionTask(task)}>Editar</button>
-                            <button onClick={() => onDeleteSessionTask(task.id)}>Eliminar</button>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </>
-              )}
-            </>
-          )}
-        </>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-course">Curso</label>
+                        <select id="student-course" className="fieldInput mb-0" value={studentForm.school_course_id} onChange={(e) => setStudentForm({ ...studentForm, school_course_id: e.target.value })}>
+                          <option value="">Curso</option>
+                          {availableCourses.map((c) => <option key={c.id} value={c.id}>{c.display_name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-name">Nombre apoderado</label>
+                        <input id="guardian-name" className="fieldInput mb-0" placeholder="Nombre apoderado" value={studentForm.guardian_name} onChange={(e) => setStudentForm({ ...studentForm, guardian_name: e.target.value })} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-phone">Teléfono apoderado</label>
+                        <input id="guardian-phone" className="fieldInput mb-0" placeholder="Teléfono apoderado" value={studentForm.guardian_phone} onChange={(e) => setStudentForm({ ...studentForm, guardian_phone: e.target.value })} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-email">Email apoderado</label>
+                        <input id="guardian-email" className="fieldInput mb-0" placeholder="Email apoderado" value={studentForm.guardian_email} onChange={(e) => setStudentForm({ ...studentForm, guardian_email: e.target.value })} />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                      <button type="button" className="actionButton" onClick={() => setShowStudentModal(false)}>
+                        Cancelar
+                      </button>
+                      <button className="actionButton actionButtonPrimary">{editingId ? 'Actualizar' : 'Crear'}</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+            </main>
+          </div>
+        </section>
       )}
-    </main>
+      </main>
+    </AppRouter>
   )
 }
 

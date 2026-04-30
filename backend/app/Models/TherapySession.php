@@ -17,6 +17,7 @@ class TherapySession extends Model
         'status',
         'objective',
         'description',
+        'general_observation',
     ];
 
     public function treatmentPlan(): BelongsTo

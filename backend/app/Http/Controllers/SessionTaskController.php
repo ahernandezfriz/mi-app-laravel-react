@@ -32,7 +32,7 @@ class SessionTaskController extends Controller
             'task_template_id' => ['nullable', 'integer', 'exists:task_templates,id'],
             'name' => ['required_without:task_template_id', 'nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
-            'rating' => ['required', Rule::in(self::RATINGS)],
+            'rating' => ['nullable', Rule::in(self::RATINGS)],
         ]);
 
         if (!empty($validated['task_template_id'])) {
@@ -60,7 +60,7 @@ class SessionTaskController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
-            'rating' => ['required', Rule::in(self::RATINGS)],
+            'rating' => ['nullable', Rule::in(self::RATINGS)],
         ]);
 
         $sessionTask->update($validated);

@@ -5,19 +5,71 @@ namespace App\Http\Controllers;
 use App\Models\Student;
 use App\Models\TherapySession;
 use App\Models\TreatmentPlan;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class TherapySessionController extends Controller
 {
+    public function today(Request $request): JsonResponse
+    {
+        $today = now()->toDateString();
+
+        $query = TherapySession::query()
+            ->with([
+                'treatmentPlan:id,student_id,year,diagnosis_snapshot',
+                'treatmentPlan.student:id,full_name,rut,current_diagnosis,school_course_id,guardian_name,guardian_phone,guardian_email',
+                'treatmentPlan.student.course:id,display_name',
+            ])
+            ->whereDate('session_date', $today)
+            ->orderByDesc('session_date');
+
+        if ($request->user()->role === 'profesional') {
+            $query->whereHas('treatmentPlan.student.professionals', function (Builder $builder) use ($request): void {
+                $builder->where('users.id', $request->user()->id);
+            });
+        }
+
+        $sessions = $query->get()->map(function (TherapySession $session): array {
+            return [
+                'session' => [
+                    'id' => $session->id,
+                    'session_date' => $session->session_date,
+                    'objective' => $session->objective,
+                    'status' => $session->status,
+                    'general_observation' => $session->general_observation,
+                ],
+                'plan' => [
+                    'id' => $session->treatmentPlan->id,
+                    'year' => $session->treatmentPlan->year,
+                    'diagnosis_snapshot' => $session->treatmentPlan->diagnosis_snapshot,
+                ],
+                'student' => [
+                    'id' => $session->treatmentPlan->student->id,
+                    'full_name' => $session->treatmentPlan->student->full_name,
+                    'rut' => $session->treatmentPlan->student->rut,
+                    'current_diagnosis' => $session->treatmentPlan->student->current_diagnosis,
+                    'guardian_name' => $session->treatmentPlan->student->guardian_name,
+                    'guardian_phone' => $session->treatmentPlan->student->guardian_phone,
+                    'guardian_email' => $session->treatmentPlan->student->guardian_email,
+                    'course' => $session->treatmentPlan->student->course
+                        ? ['display_name' => $session->treatmentPlan->student->course->display_name]
+                        : null,
+                ],
+            ];
+        });
+
+        return response()->json($sessions->values());
+    }
+
     public function index(Request $request, Student $student, TreatmentPlan $treatmentPlan): JsonResponse
     {
         $this->authorizeStudent($request, $student);
         $this->ensurePlanBelongsToStudent($student, $treatmentPlan);
 
         return response()->json(
-            $treatmentPlan->sessions()->orderBy('session_date')->get()
+            $treatmentPlan->sessions()->orderByDesc('session_date')->get()
         );
     }
 
@@ -30,7 +82,8 @@ class TherapySessionController extends Controller
             'session_date' => ['required', 'date'],
             'objective' => ['required', 'string'],
             'description' => ['nullable', 'string'],
-            'status' => ['nullable', Rule::in(['draft', 'finalizada'])],
+            'general_observation' => ['nullable', 'string'],
+            'status' => ['nullable', Rule::in(['pendiente', 'finalizada', 'suspendida', 'draft'])],
         ]);
 
         $session = TherapySession::create([
@@ -38,7 +91,8 @@ class TherapySessionController extends Controller
             'session_date' => $validated['session_date'],
             'objective' => $validated['objective'],
             'description' => $validated['description'] ?? null,
-            'status' => $validated['status'] ?? 'draft',
+            'general_observation' => $validated['general_observation'] ?? null,
+            'status' => ($validated['status'] ?? 'pendiente') === 'draft' ? 'pendiente' : ($validated['status'] ?? 'pendiente'),
         ]);
 
         return response()->json($session, 201);
@@ -54,8 +108,13 @@ class TherapySessionController extends Controller
             'session_date' => ['required', 'date'],
             'objective' => ['required', 'string'],
             'description' => ['nullable', 'string'],
-            'status' => ['required', Rule::in(['draft', 'finalizada'])],
+            'general_observation' => ['nullable', 'string'],
+            'status' => ['required', Rule::in(['pendiente', 'finalizada', 'suspendida', 'draft'])],
         ]);
+
+        if (($validated['status'] ?? null) === 'draft') {
+            $validated['status'] = 'pendiente';
+        }
 
         $session->update($validated);
 
