@@ -40,6 +40,7 @@ class SessionTaskController extends Controller
             abort_unless($template->user_id === $request->user()->id, 403, 'No autorizado para usar esta tarea.');
             $validated['name'] = $template->name;
             $validated['description'] = $validated['description'] ?? $template->description;
+            $template->update(['last_used_at' => now()]);
         }
 
         $task = $session->tasks()->create($validated);

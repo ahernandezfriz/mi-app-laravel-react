@@ -60,3 +60,17 @@ body {
 .appShell li {
   @apply rounded-[5px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700;
 }
+
+/* Regla general de usabilidad: elementos interactivos muestran "manito". */
+a,
+button,
+[role="button"],
+summary,
+select {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}

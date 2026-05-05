@@ -13,8 +13,20 @@ class TaskTemplate extends Model
 
     protected $fillable = [
         'user_id',
+        'task_category_id',
         'name',
         'description',
+        'category',
+        'is_favorite',
+        'last_used_at',
+        'archived_at',
+        'last_edited_by_user_id',
+    ];
+
+    protected $casts = [
+        'is_favorite' => 'boolean',
+        'last_used_at' => 'datetime',
+        'archived_at' => 'datetime',
     ];
 
     public function user(): BelongsTo
@@ -25,5 +37,15 @@ class TaskTemplate extends Model
     public function sessionTasks(): HasMany
     {
         return $this->hasMany(SessionTask::class);
+    }
+
+    public function categoryRef(): BelongsTo
+    {
+        return $this->belongsTo(TaskCategory::class, 'task_category_id');
+    }
+
+    public function lastEditor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'last_edited_by_user_id');
     }
 }

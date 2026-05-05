@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import AppRouter from './app/router/AppRouter'
+import TaskBankSection from './features/taskTemplates/components/TaskBankSection'
 import FeedbackMessage from './shared/components/FeedbackMessage'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
@@ -28,6 +29,7 @@ const ratingToScore = {
 function App() {
   const [status, setStatus] = useState('Inicializando...')
   const [token, setToken] = useState(localStorage.getItem('token') || '')
+  const [currentUser, setCurrentUser] = useState(null)
   const [professions, setProfessions] = useState([])
   const [levels, setLevels] = useState([])
   const [students, setStudents] = useState([])
@@ -72,7 +74,23 @@ function App() {
     status: 'pendiente',
   })
   const [taskTemplates, setTaskTemplates] = useState([])
-  const [templateForm, setTemplateForm] = useState({ name: '', description: '' })
+  const [taskCategories, setTaskCategories] = useState([])
+  const [taskTemplateFilters, setTaskTemplateFilters] = useState({
+    q: '',
+    sort: 'name',
+    direction: 'asc',
+    category: '',
+    favoritesOnly: false,
+    recentOnly: false,
+    includeArchived: false,
+  })
+  const [templateForm, setTemplateForm] = useState({
+    name: '',
+    description: '',
+    category: '',
+    is_favorite: false,
+    apply_to_pending_sessions: false,
+  })
   const [editingTemplateId, setEditingTemplateId] = useState(null)
   const [selectedSession, setSelectedSession] = useState(null)
   const [sessionObservation, setSessionObservation] = useState('')
@@ -80,6 +98,7 @@ function App() {
   const [sessionTasks, setSessionTasks] = useState([])
   const [taskForm, setTaskForm] = useState({
     task_template_id: '',
+    task_template_ids: [],
     name: '',
     description: '',
     rating: 'por_lograr',
@@ -140,14 +159,54 @@ function App() {
     }
   }, [api])
 
-  const loadTaskTemplates = useCallback(async () => {
+  const loadCurrentUser = useCallback(async () => {
     try {
-      const data = await api('/task-templates')
-      setTaskTemplates(data)
+      const data = await api('/auth/me')
+      setCurrentUser(data || null)
     } catch (error) {
       setStatus(error.message)
     }
   }, [api])
+
+  const loadTaskTemplates = useCallback(async () => {
+    try {
+      const searchParams = new URLSearchParams()
+      if (taskTemplateFilters.q.trim()) {
+        searchParams.set('q', taskTemplateFilters.q.trim())
+      }
+      if (taskTemplateFilters.category) {
+        searchParams.set('category_id', taskTemplateFilters.category)
+      }
+      if (taskTemplateFilters.favoritesOnly) {
+        searchParams.set('favorites_only', '1')
+      }
+      if (taskTemplateFilters.recentOnly) {
+        searchParams.set('recent_only', '1')
+      }
+      if (taskTemplateFilters.includeArchived) {
+        searchParams.set('include_archived', '1')
+      }
+      searchParams.set('sort', taskTemplateFilters.sort)
+      searchParams.set('direction', taskTemplateFilters.direction)
+      const data = await api(`/task-templates?${searchParams.toString()}`)
+      setTaskTemplates(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }, [api, taskTemplateFilters])
+
+  const loadTaskCategories = useCallback(async () => {
+    try {
+      const data = await api('/task-categories')
+      setTaskCategories(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }, [api])
+
+  const onTaskTemplateFilterChange = useCallback((field, value) => {
+    setTaskTemplateFilters((prev) => ({ ...prev, [field]: value }))
+  }, [])
 
   useEffect(() => {
     const init = async () => {
@@ -160,11 +219,11 @@ function App() {
   useEffect(() => {
     const load = async () => {
       if (token) {
-        await Promise.all([loadStudents(), loadTaskTemplates()])
+        await Promise.all([loadStudents(), loadTaskTemplates(), loadTaskCategories(), loadCurrentUser()])
       }
     }
     load()
-  }, [token, loadStudents, loadTaskTemplates])
+  }, [token, loadStudents, loadTaskTemplates, loadTaskCategories, loadCurrentUser])
 
   useEffect(() => {
     // Permite animar salida antes de desmontar visualmente el modal.
@@ -422,8 +481,10 @@ function App() {
     } finally {
       localStorage.removeItem('token')
       setToken('')
+      setCurrentUser(null)
       setStudents([])
       setTaskTemplates([])
+      setTaskCategories([])
     }
   }
 
@@ -432,13 +493,45 @@ function App() {
     const path = editingTemplateId ? `/task-templates/${editingTemplateId}` : '/task-templates'
     const method = editingTemplateId ? 'PUT' : 'POST'
     try {
-      await api(path, { method, body: JSON.stringify(templateForm) })
-      setTemplateForm({ name: '', description: '' })
+      let taskCategoryId = templateForm.task_category_id || null
+      if (taskCategoryId === '__new__') {
+        taskCategoryId = null
+      }
+      const newCategoryName = (templateForm.new_category_name || '').trim()
+      if (newCategoryName) {
+        const newCategory = await api('/task-categories', {
+          method: 'POST',
+          body: JSON.stringify({ name: newCategoryName }),
+        })
+        taskCategoryId = newCategory.id
+      }
+
+      const savedTemplate = await api(path, {
+        method,
+        body: JSON.stringify({
+          ...templateForm,
+          task_category_id: taskCategoryId,
+        }),
+      })
+      setTemplateForm({
+        name: '',
+        description: '',
+        task_category_id: '',
+        new_category_name: '',
+        is_favorite: false,
+        apply_to_pending_sessions: false,
+      })
       setEditingTemplateId(null)
-      await loadTaskTemplates()
-      setStatus('Tarea reutilizable guardada')
+      await Promise.all([loadTaskTemplates(), loadTaskCategories()])
+      if (editingTemplateId && templateForm.apply_to_pending_sessions) {
+        setStatus(`Tarea reutilizable guardada. Se actualizaron ${savedTemplate.updated_pending_sessions_count ?? 0} tareas en sesiones pendientes.`)
+      } else {
+        setStatus('Tarea reutilizable guardada')
+      }
+      return true
     } catch (error) {
       setStatus(error.message)
+      return false
     }
   }
 
@@ -447,16 +540,59 @@ function App() {
     setTemplateForm({
       name: template.name,
       description: template.description || '',
+      task_category_id: template.task_category_id ? String(template.task_category_id) : '',
+      new_category_name: '',
+      is_favorite: Boolean(template.is_favorite),
+      apply_to_pending_sessions: false,
     })
   }
 
   async function onDeleteTemplate(templateId) {
-    if (!window.confirm('Eliminar tarea reutilizable?')) return
+    if (!window.confirm('Archivar tarea reutilizable?')) return
     try {
       await api(`/task-templates/${templateId}`, { method: 'DELETE' })
       await loadTaskTemplates()
       setTaskHistory([])
-      setStatus('Tarea reutilizable eliminada')
+      setStatus('Tarea reutilizable archivada')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onRestoreTemplate(templateId) {
+    try {
+      await api(`/task-templates/${templateId}/restore`, { method: 'POST' })
+      await loadTaskTemplates()
+      setStatus('Tarea restaurada')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onDuplicateTemplate(templateId) {
+    try {
+      await api(`/task-templates/${templateId}/duplicate`, { method: 'POST' })
+      await loadTaskTemplates()
+      setStatus('Tarea duplicada')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onToggleFavoriteTemplate(template) {
+    try {
+      await api(`/task-templates/${template.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: template.name,
+          description: template.description || '',
+          task_category_id: template.task_category_id || null,
+          is_favorite: !template.is_favorite,
+          apply_to_pending_sessions: false,
+        }),
+      })
+      await loadTaskTemplates()
+      setStatus('Favorito actualizado')
     } catch (error) {
       setStatus(error.message)
     }
@@ -608,6 +744,7 @@ function App() {
     setEditingTaskId(null)
     setTaskForm({
       task_template_id: '',
+      task_template_ids: [],
       name: '',
       description: '',
       rating: 'por_lograr',
@@ -754,17 +891,31 @@ function App() {
     e.preventDefault()
     if (!selectedStudent || !selectedPlan || !selectedSession) return
     const path = `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks`
-    const payload = {
-      task_template_id:
-        taskCreationMode === 'import' && taskForm.task_template_id ? Number(taskForm.task_template_id) : null,
-      name: taskForm.name,
-      description: taskForm.description,
-      // Se crea sin evaluación aplicada; la calificación se registra después en la sesión.
-      rating: null,
-    }
-
     try {
-      await api(path, { method: 'POST', body: JSON.stringify(payload) })
+      if (taskCreationMode === 'import' && taskForm.task_template_ids.length > 0) {
+        const selectedTemplates = taskTemplates.filter((template) =>
+          taskForm.task_template_ids.includes(String(template.id)),
+        )
+        await Promise.all(selectedTemplates.map((template) => api(path, {
+          method: 'POST',
+          body: JSON.stringify({
+            task_template_id: template.id,
+            name: template.name,
+            description: template.description,
+            rating: null,
+          }),
+        })))
+      } else {
+        const payload = {
+          task_template_id:
+            taskCreationMode === 'import' && taskForm.task_template_id ? Number(taskForm.task_template_id) : null,
+          name: taskForm.name,
+          description: taskForm.description,
+          // Se crea sin evaluación aplicada; la calificación se registra después en la sesión.
+          rating: null,
+        }
+        await api(path, { method: 'POST', body: JSON.stringify(payload) })
+      }
       await onSelectSession(selectedSession)
       setShowTaskModal(false)
       setEditingTaskId(null)
@@ -871,13 +1022,15 @@ function App() {
     }
   }
 
-  function onTemplateSelectionChange(templateId) {
-    const template = taskTemplates.find((item) => String(item.id) === String(templateId))
+  function onTemplateMultiSelectionChange(templateIds) {
+    const selectedIds = Array.from(templateIds)
+    const previewTemplate = taskTemplates.find((item) => String(item.id) === String(selectedIds[0]))
     setTaskForm({
       ...taskForm,
-      task_template_id: templateId,
-      name: template ? template.name : '',
-      description: template?.description || '',
+      task_template_ids: selectedIds,
+      task_template_id: selectedIds[0] || '',
+      name: previewTemplate ? previewTemplate.name : '',
+      description: previewTemplate?.description || '',
     })
   }
 
@@ -886,6 +1039,7 @@ function App() {
     setTaskCreationMode('manual')
     setTaskForm({
       task_template_id: '',
+      task_template_ids: [],
       name: '',
       description: '',
       rating: 'por_lograr',
@@ -898,6 +1052,7 @@ function App() {
     setTaskCreationMode('import')
     setTaskForm({
       task_template_id: '',
+      task_template_ids: [],
       name: '',
       description: '',
       rating: 'por_lograr',
@@ -1039,12 +1194,37 @@ function App() {
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  className="rounded-[5px] border border-white/40 bg-white/10 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                  onClick={onLogout}
-                >
-                  Cerrar sesion
-                </button>
+                {currentUser && (
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      className="px-1 py-1 text-left text-sm font-semibold text-white/95 underline-offset-4 transition hover:text-white hover:underline"
+                      aria-haspopup="menu"
+                      aria-label="Abrir menú de usuario"
+                    >
+                      {currentUser.name}
+                    </button>
+                    <div
+                      role="menu"
+                      className="invisible absolute right-0 z-50 mt-1 w-48 rounded-[5px] border border-slate-200 bg-white py-1 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                    >
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100"
+                        onClick={() => setActiveSection('profile')}
+                      >
+                        Editar perfil
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100"
+                        onClick={onLogout}
+                      >
+                        Cerrar sesión
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </header>
@@ -1058,6 +1238,12 @@ function App() {
                   onClick={() => setActiveSection('overview')}
                 >
                   Dashboard
+                </button>
+                <button
+                  className={`actionButton w-full text-left ${activeSection === 'profile' ? 'actionButtonPrimary' : ''}`}
+                  onClick={() => setActiveSection('profile')}
+                >
+                  Mi perfil
                 </button>
                 <button
                   className={`actionButton w-full text-left ${activeSection === 'students' ? 'actionButtonPrimary' : ''}`}
@@ -1093,7 +1279,7 @@ function App() {
                   className={`actionButton w-full text-left ${activeSection === 'tasks' ? 'actionButtonPrimary' : ''}`}
                   onClick={() => setActiveSection('tasks')}
                 >
-                  Tareas
+                  Banco de tareas
                 </button>
               </div>
             </aside>
@@ -1220,47 +1406,44 @@ function App() {
                 </>
               )}
 
-            {activeSection === 'tasks' && (
-              <section className="sectionCard">
-                <h2 className="sectionTitle">{editingTemplateId ? 'Editar tarea reutilizable' : 'Nueva tarea reutilizable'}</h2>
-                <form onSubmit={onSaveTemplate}>
-                  <input
-                    placeholder="Nombre de tarea"
-                    value={templateForm.name}
-                    onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
-                  />
-                  <input
-                    placeholder="Descripcion de tarea"
-                    value={templateForm.description}
-                    onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
-                  />
-                  <button>{editingTemplateId ? 'Actualizar tarea' : 'Crear tarea'}</button>
-                </form>
-                <ul>
-                  {taskTemplates.map((template) => (
-                    <li key={template.id}>
-                      {template.name}
-                      <button onClick={() => onEditTemplate(template)}>Editar</button>
-                      <button onClick={() => onDeleteTemplate(template.id)}>Eliminar</button>
-                      <button onClick={() => onViewTemplateHistory(template.id)}>Ver historico</button>
-                    </li>
-                  ))}
-                </ul>
+              {activeSection === 'profile' && (
+                <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-base font-semibold text-slate-900">Mi perfil</h2>
+                  {currentUser ? (
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2">
+                      <p><strong>Nombre:</strong> {currentUser.name}</p>
+                      <p><strong>Email:</strong> {currentUser.email}</p>
+                      <p><strong>RUT:</strong> {currentUser.rut || '-'}</p>
+                      <p><strong>Rol:</strong> {currentUser.role || '-'}</p>
+                      <p><strong>Profesión:</strong> {currentUser.profession?.name || '-'}</p>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-500">No fue posible cargar los datos de perfil.</p>
+                  )}
+                </section>
+              )}
 
-                {taskHistory.length > 0 && (
-                  <>
-                    <h3 className="mt-4 text-base font-semibold text-slate-900">Historico de tarea reutilizable</h3>
-                    <ul>
-                      {taskHistory.map((entry) => (
-                        <li key={entry.id}>
-                          {entry.session?.treatment_plan?.student?.full_name} - {entry.session?.treatment_plan?.year} - {formatDisplayDate(entry.session?.session_date)}
-                          {' | '}Calificacion: {ratingOptions.find((option) => option.value === entry.rating)?.label || entry.rating}
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-              </section>
+            {activeSection === 'tasks' && (
+              <TaskBankSection
+                taskTemplateFilters={taskTemplateFilters}
+                onTaskTemplateFilterChange={onTaskTemplateFilterChange}
+                taskCategories={taskCategories}
+                editingTemplateId={editingTemplateId}
+                setEditingTemplateId={setEditingTemplateId}
+                templateForm={templateForm}
+                setTemplateForm={setTemplateForm}
+                onSaveTemplate={onSaveTemplate}
+                taskTemplates={taskTemplates}
+                onEditTemplate={onEditTemplate}
+                onDeleteTemplate={onDeleteTemplate}
+                onRestoreTemplate={onRestoreTemplate}
+                onDuplicateTemplate={onDuplicateTemplate}
+                onToggleFavoriteTemplate={onToggleFavoriteTemplate}
+                onViewTemplateHistory={onViewTemplateHistory}
+                taskHistory={taskHistory}
+                formatDisplayDate={formatDisplayDate}
+                ratingOptions={ratingOptions}
+              />
             )}
 
             {activeSection === 'students' && (
@@ -1829,18 +2012,22 @@ function App() {
                       {taskCreationMode === 'import' && (
                         <div>
                           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Plantilla
+                            Plantillas (selección múltiple)
                           </label>
                           <select
                             className="fieldInput mb-0"
-                            value={taskForm.task_template_id}
-                            onChange={(e) => onTemplateSelectionChange(e.target.value)}
+                            multiple
+                            value={taskForm.task_template_ids}
+                            onChange={(e) => {
+                              const selectedValues = Array.from(e.target.selectedOptions).map((option) => option.value)
+                              onTemplateMultiSelectionChange(selectedValues)
+                            }}
                           >
-                            <option value="">Selecciona una plantilla</option>
                             {taskTemplates.map((template) => (
                               <option key={template.id} value={template.id}>{template.name}</option>
                             ))}
                           </select>
+                          <p className="mt-1 text-xs text-slate-500">Mantén presionada la tecla Ctrl para seleccionar varias.</p>
                         </div>
                       )}
 
@@ -1867,6 +2054,17 @@ function App() {
                           onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
                         />
                       </div>
+
+                      {taskCreationMode === 'import' && taskForm.task_template_ids.length > 0 && (
+                        <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Vista previa</p>
+                          <p className="mt-1 text-sm font-medium text-slate-900">{taskForm.name || 'Sin nombre'}</p>
+                          <p className="mt-1 text-sm text-slate-700">{taskForm.description || 'Sin descripción'}</p>
+                          <p className="mt-2 text-xs text-slate-500">
+                            Se importarán {taskForm.task_template_ids.length} tareas a la sesión.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
