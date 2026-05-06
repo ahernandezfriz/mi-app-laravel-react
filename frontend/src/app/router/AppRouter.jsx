@@ -7,10 +7,10 @@ function AppRouter({ token, authProps, children }) {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to={token ? '/dashboard' : '/login'} replace />} />
+        <Route path="/" element={<Navigate to={token ? '/dashboard/overview' : '/login'} replace />} />
         <Route
           path="/login"
-          element={token ? <Navigate to="/dashboard" replace /> : (
+          element={token ? <Navigate to="/dashboard/overview" replace /> : (
             <LoginPage
               loginForm={authProps.loginForm}
               setLoginForm={authProps.setLoginForm}
@@ -23,7 +23,7 @@ function AppRouter({ token, authProps, children }) {
         />
         <Route
           path="/register"
-          element={token ? <Navigate to="/dashboard" replace /> : (
+          element={token ? <Navigate to="/dashboard/overview" replace /> : (
             <RegisterPage
               authForm={authProps.authForm}
               setAuthForm={authProps.setAuthForm}
@@ -37,7 +37,7 @@ function AppRouter({ token, authProps, children }) {
         />
         <Route
           path="/forgot-password"
-          element={token ? <Navigate to="/dashboard" replace /> : (
+          element={token ? <Navigate to="/dashboard/overview" replace /> : (
             <ForgotPasswordPage
               forgotForm={authProps.forgotForm}
               setForgotForm={authProps.setForgotForm}
@@ -51,10 +51,10 @@ function AppRouter({ token, authProps, children }) {
           )}
         />
         <Route
-          path="/dashboard"
+          path="/dashboard/*"
           element={token ? children : <Navigate to="/login" replace />}
         />
-        <Route path="*" element={<Navigate to={token ? '/dashboard' : '/login'} replace />} />
+        <Route path="*" element={<Navigate to={token ? '/dashboard/overview' : '/login'} replace />} />
       </Routes>
     </BrowserRouter>
   )

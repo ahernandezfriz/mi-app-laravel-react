@@ -16,6 +16,7 @@ class Student extends Model
         'full_name',
         'rut',
         'current_diagnosis',
+        'student_diagnosis_id',
         'school_level_id',
         'school_course_id',
         'guardian_name',
@@ -31,6 +32,11 @@ class Student extends Model
     public function course(): BelongsTo
     {
         return $this->belongsTo(SchoolCourse::class, 'school_course_id');
+    }
+
+    public function studentDiagnosis(): BelongsTo
+    {
+        return $this->belongsTo(StudentDiagnosis::class);
     }
 
     public function professionals(): BelongsToMany

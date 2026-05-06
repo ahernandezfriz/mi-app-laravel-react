@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\SchoolCourse;
 use App\Models\Student;
+use App\Models\StudentDiagnosis;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -12,7 +13,7 @@ class StudentController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Student::query()->with(['level', 'course', 'professionals:id,name']);
+        $query = Student::query()->with(['level', 'course', 'studentDiagnosis:id,name', 'professionals:id,name']);
 
         if ($request->user()->role === 'profesional') {
             $query->whereHas('professionals', function ($q) use ($request): void {
@@ -28,7 +29,11 @@ class StudentController extends Controller
         $validated = $request->validate([
             'full_name' => ['required', 'string', 'max:255'],
             'rut' => ['required', 'string', 'max:20', Rule::unique('students', 'rut')],
-            'current_diagnosis' => ['required', 'string'],
+            'student_diagnosis_id' => [
+                'required',
+                'integer',
+                Rule::exists('student_diagnoses', 'id')->where('user_id', $request->user()->id),
+            ],
             'school_level_id' => ['required', 'integer', 'exists:school_levels,id'],
             'school_course_id' => ['required', 'integer', 'exists:school_courses,id'],
             'guardian_name' => ['required', 'string', 'max:255'],
@@ -37,10 +42,16 @@ class StudentController extends Controller
         ]);
 
         $this->ensureCourseBelongsToLevel($validated['school_course_id'], $validated['school_level_id']);
-        $student = Student::create($validated);
+        $diagnosis = StudentDiagnosis::query()->findOrFail($validated['student_diagnosis_id']);
+        abort_unless($diagnosis->user_id === $request->user()->id, 403);
+
+        $student = Student::create([
+            ...$validated,
+            'current_diagnosis' => $diagnosis->name,
+        ]);
         $student->professionals()->syncWithoutDetaching([$request->user()->id]);
 
-        return response()->json($student->load(['level', 'course', 'professionals:id,name']), 201);
+        return response()->json($student->load(['level', 'course', 'studentDiagnosis:id,name', 'professionals:id,name']), 201);
     }
 
     public function show(Request $request, Student $student): JsonResponse
@@ -50,6 +61,7 @@ class StudentController extends Controller
         return response()->json($student->load([
             'level',
             'course',
+            'studentDiagnosis:id,name',
             'professionals:id,name',
             'treatmentPlans' => fn ($query) => $query->with('creator:id,name')->orderByDesc('year'),
         ]));
@@ -62,7 +74,11 @@ class StudentController extends Controller
         $validated = $request->validate([
             'full_name' => ['required', 'string', 'max:255'],
             'rut' => ['required', 'string', 'max:20', Rule::unique('students', 'rut')->ignore($student->id)],
-            'current_diagnosis' => ['required', 'string'],
+            'student_diagnosis_id' => [
+                'required',
+                'integer',
+                Rule::exists('student_diagnoses', 'id')->where('user_id', $request->user()->id),
+            ],
             'school_level_id' => ['required', 'integer', 'exists:school_levels,id'],
             'school_course_id' => ['required', 'integer', 'exists:school_courses,id'],
             'guardian_name' => ['required', 'string', 'max:255'],
@@ -71,9 +87,15 @@ class StudentController extends Controller
         ]);
 
         $this->ensureCourseBelongsToLevel($validated['school_course_id'], $validated['school_level_id']);
-        $student->update($validated);
+        $diagnosis = StudentDiagnosis::query()->findOrFail($validated['student_diagnosis_id']);
+        abort_unless($diagnosis->user_id === $request->user()->id, 403);
 
-        return response()->json($student->load(['level', 'course', 'professionals:id,name']));
+        $student->update([
+            ...$validated,
+            'current_diagnosis' => $diagnosis->name,
+        ]);
+
+        return response()->json($student->load(['level', 'course', 'studentDiagnosis:id,name', 'professionals:id,name']));
     }
 
     public function destroy(Request $request, Student $student): JsonResponse

@@ -29,4 +29,9 @@ class TherapySession extends Model
     {
         return $this->hasMany(SessionTask::class, 'therapy_session_id');
     }
+
+    public function materials(): HasMany
+    {
+        return $this->hasMany(SessionMaterial::class, 'therapy_session_id')->latest('id');
+    }
 }

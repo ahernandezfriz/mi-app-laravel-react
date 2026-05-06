@@ -21,6 +21,13 @@ export default function TaskBankSection({
   ratingOptions,
 }) {
   const [showTemplateModal, setShowTemplateModal] = useState(false)
+  const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [historyTemplateName, setHistoryTemplateName] = useState('')
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = 10
 
   function onOpenCreateTemplateModal() {
     setEditingTemplateId(null)
@@ -62,12 +69,56 @@ export default function TaskBankSection({
     }
   }
 
+  async function onOpenHistoryModal(template) {
+    setHistoryTemplateName(template.name)
+    setShowHistoryModal(true)
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      await onViewTemplateHistory(template.id)
+    } catch {
+      setHistoryError('No fue posible cargar el histórico de la tarea.')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
   function formatTemplateDate(value) {
     if (!value) return '-'
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return '-'
     return date.toLocaleDateString('es-CL')
   }
+
+  const historyTotal = taskHistory.length
+  const historyRatingCounts = ratingOptions.map((option) => ({
+    ...option,
+    count: taskHistory.filter((entry) => entry.rating === option.value).length,
+  }))
+  const historySegments = historyRatingCounts.map((entry) => ({
+    ...entry,
+    percent: historyTotal > 0 ? Math.round((entry.count / historyTotal) * 100) : 0,
+  }))
+  const historyPieConic = historySegments.length > 0
+    ? `conic-gradient(
+      #ef4444 0% ${historySegments[0].percent}%,
+      #f59e0b ${historySegments[0].percent}% ${historySegments[0].percent + historySegments[1].percent}%,
+      #10b981 ${historySegments[0].percent + historySegments[1].percent}% 100%
+    )`
+    : 'conic-gradient(#cbd5e1 0% 100%)'
+
+  function onResetFilters() {
+    onTaskTemplateFilterChange('q', '')
+    onTaskTemplateFilterChange('category', '')
+    onTaskTemplateFilterChange('favoritesOnly', false)
+    onTaskTemplateFilterChange('includeArchived', false)
+    setCurrentPage(1)
+  }
+
+  const totalPages = Math.max(1, Math.ceil(taskTemplates.length / pageSize))
+  const safePage = Math.min(currentPage, totalPages)
+  const pageStart = (safePage - 1) * pageSize
+  const paginatedTemplates = taskTemplates.slice(pageStart, pageStart + pageSize)
 
   return (
     <section className="sectionCard">
@@ -83,65 +134,74 @@ export default function TaskBankSection({
         </button>
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-        <input
-          className="fieldInput mb-0"
-          placeholder="Buscar tarea por nombre o descripcion"
-          value={taskTemplateFilters.q}
-          onChange={(e) => onTaskTemplateFilterChange('q', e.target.value)}
-        />
-        <select
-          className="fieldInput mb-0"
-          value={taskTemplateFilters.sort}
-          onChange={(e) => onTaskTemplateFilterChange('sort', e.target.value)}
-        >
-          <option value="name">Ordenar por nombre</option>
-          <option value="created_at">Ordenar por fecha de creacion</option>
-        </select>
-        <select
-          className="fieldInput mb-0"
-          value={taskTemplateFilters.direction}
-          onChange={(e) => onTaskTemplateFilterChange('direction', e.target.value)}
-        >
-          <option value="asc">Ascendente</option>
-          <option value="desc">Descendente</option>
-        </select>
-        <select
-          className="fieldInput mb-0"
-          value={taskTemplateFilters.category}
-          onChange={(e) => onTaskTemplateFilterChange('category', e.target.value)}
-        >
-          <option value="">Todas las categorías</option>
-          {taskCategories.map((category) => (
-            <option key={category.id} value={String(category.id)}>
-              {category.name}
-            </option>
-          ))}
-        </select>
-        <label className="flex items-center gap-2 rounded-[5px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+      <div className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="rounded-[5px] border border-slate-200 bg-white p-3">
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Buscar
+          </label>
           <input
-            type="checkbox"
-            checked={Boolean(taskTemplateFilters.favoritesOnly)}
-            onChange={(e) => onTaskTemplateFilterChange('favoritesOnly', e.target.checked)}
+            className="fieldInput mb-0"
+            placeholder="Buscar tarea por nombre o descripción"
+            value={taskTemplateFilters.q}
+            onChange={(e) => onTaskTemplateFilterChange('q', e.target.value)}
           />
-          Solo favoritas
-        </label>
-        <label className="flex items-center gap-2 rounded-[5px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={Boolean(taskTemplateFilters.recentOnly)}
-            onChange={(e) => onTaskTemplateFilterChange('recentOnly', e.target.checked)}
-          />
-          Solo recientes
-        </label>
-        <label className="flex items-center gap-2 rounded-[5px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={Boolean(taskTemplateFilters.includeArchived)}
-            onChange={(e) => onTaskTemplateFilterChange('includeArchived', e.target.checked)}
-          />
-          Incluir archivadas
-        </label>
+        </div>
+
+        <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Filtros
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="actionButton"
+                onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                aria-expanded={showAdvancedFilters}
+              >
+                {showAdvancedFilters ? 'Ocultar' : 'Mostrar'}
+              </button>
+              <button type="button" className="actionButton" onClick={onResetFilters}>
+                Limpiar
+              </button>
+            </div>
+          </div>
+
+          {showAdvancedFilters && (
+            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+              <select
+                className="fieldInput mb-0"
+                value={taskTemplateFilters.category}
+                onChange={(e) => onTaskTemplateFilterChange('category', e.target.value)}
+              >
+                <option value="">Categoría: todas</option>
+                {taskCategories.map((category) => (
+                  <option key={category.id} value={String(category.id)}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+              <div className="flex flex-wrap items-center gap-3 rounded-[5px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(taskTemplateFilters.favoritesOnly)}
+                    onChange={(e) => onTaskTemplateFilterChange('favoritesOnly', e.target.checked)}
+                  />
+                  Favoritas
+                </label>
+                <label className="inline-flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(taskTemplateFilters.includeArchived)}
+                    onChange={(e) => onTaskTemplateFilterChange('includeArchived', e.target.checked)}
+                  />
+                  Archivadas
+                </label>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="overflow-x-auto rounded-[5px] border border-slate-200">
@@ -156,7 +216,7 @@ export default function TaskBankSection({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {taskTemplates.map((template) => (
+            {paginatedTemplates.map((template) => (
               <tr key={template.id} className="hover:bg-slate-50">
                 <td className="px-3 py-3 text-slate-700">
                   <div className="flex items-center gap-2">
@@ -198,7 +258,7 @@ export default function TaskBankSection({
                     ) : (
                       <button type="button" className="actionButton" onClick={() => onDeleteTemplate(template.id)}>Archivar</button>
                     )}
-                    <button type="button" className="actionButton" onClick={() => onViewTemplateHistory(template.id)}>Ver historico</button>
+                    <button type="button" className="actionButton" onClick={() => onOpenHistoryModal(template)}>Ver historico</button>
                   </div>
                 </td>
               </tr>
@@ -213,6 +273,31 @@ export default function TaskBankSection({
           </tbody>
         </table>
       </div>
+      {taskTemplates.length > pageSize && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+          <span>
+            Página {safePage} de {totalPages}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="actionButton"
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={safePage === 1}
+            >
+              Anterior
+            </button>
+            <button
+              type="button"
+              className="actionButton"
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={safePage === totalPages}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
+      )}
 
       {showTemplateModal && (
         <div
@@ -334,19 +419,78 @@ export default function TaskBankSection({
         </div>
       )}
 
-      {taskHistory.length > 0 && (
-        <>
-          <h3 className="mt-4 text-base font-semibold text-slate-900">Historico de tarea reutilizable</h3>
-          <ul>
-            {taskHistory.map((entry) => (
-              <li key={entry.id}>
-                {entry.session?.treatment_plan?.student?.full_name} - {entry.session?.treatment_plan?.year} - {formatDisplayDate(entry.session?.session_date)}
-                {' | '}Calificacion: {ratingOptions.find((option) => option.value === entry.rating)?.label || entry.rating}
-              </li>
-            ))}
-          </ul>
-        </>
+      {showHistoryModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowHistoryModal(false)
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-3xl rounded-[5px] border border-slate-200 bg-white shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Histórico de tarea</h2>
+                <p className="mt-1 text-sm text-slate-500">{historyTemplateName || 'Tarea reutilizable'}</p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                onClick={() => setShowHistoryModal(false)}
+                aria-label="Cerrar modal"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="max-h-[60vh] overflow-auto px-5 py-4">
+              {historyLoading ? (
+                <p className="text-sm text-slate-500">Cargando histórico...</p>
+              ) : historyError ? (
+                <p className="text-sm text-red-600">{historyError}</p>
+              ) : taskHistory.length === 0 ? (
+                <p className="text-sm text-slate-500">Esta tarea aún no tiene registros de uso en sesiones.</p>
+              ) : (
+                <div className="space-y-4">
+                  <section className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                    <h3 className="text-sm font-semibold text-slate-900">Distribución de calificaciones</h3>
+                    <div className="mt-3 flex flex-col items-center gap-4 md:flex-row md:items-start">
+                      <div
+                        className="h-40 w-40 rounded-full border border-slate-200 shadow-inner"
+                        style={{ background: historyPieConic }}
+                        role="img"
+                        aria-label="Gráfico de torta de distribución de calificaciones"
+                      />
+                      <ul className="w-full space-y-1 text-sm text-slate-700 md:w-auto">
+                        {historySegments.map((entry) => (
+                          <li key={entry.value} className="flex items-center justify-between gap-3 md:min-w-[220px]">
+                            <span>{entry.dot} {entry.label}</span>
+                            <span className="font-medium">{entry.count} ({entry.percent}%)</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </section>
+
+                  <ul className="space-y-2">
+                    {taskHistory.map((entry) => (
+                      <li key={entry.id} className="rounded-[5px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                        {entry.session?.treatment_plan?.student?.full_name} - {entry.session?.treatment_plan?.year} - {formatDisplayDate(entry.session?.session_date)}
+                        {' | '}Calificacion: {ratingOptions.find((option) => option.value === entry.rating)?.label || entry.rating}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
+
     </section>
   )
 }

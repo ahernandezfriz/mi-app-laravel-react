@@ -61,6 +61,32 @@ class AuthController extends Controller
         return response()->json($request->user()->load('profession'));
     }
 
+    public function updateMe(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'rut' => ['required', 'string', 'max:20'],
+            'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            'profession_id' => ['required', 'integer', 'exists:professions,id'],
+            'password' => ['nullable', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $user->name = $validated['name'];
+        $user->rut = $validated['rut'];
+        $user->email = $validated['email'];
+        $user->profession_id = $validated['profession_id'];
+
+        if (! empty($validated['password'])) {
+            $user->password = Hash::make($validated['password']);
+        }
+
+        $user->save();
+
+        return response()->json($user->fresh()->load('profession'));
+    }
+
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()?->delete();

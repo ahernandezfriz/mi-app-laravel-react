@@ -2,10 +2,13 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CatalogController;
+use App\Http\Controllers\MediaLibraryController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\SessionMaterialController;
 use App\Http\Controllers\SessionTaskController;
 use App\Http\Controllers\StudentAssignmentController;
 use App\Http\Controllers\StudentController;
+use App\Http\Controllers\StudentDiagnosisController;
 use App\Http\Controllers\TaskCategoryController;
 use App\Http\Controllers\TaskTemplateController;
 use App\Http\Controllers\TherapySessionController;
@@ -30,6 +33,7 @@ Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
 
 Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/auth/me', [AuthController::class, 'me']);
+    Route::put('/auth/me', [AuthController::class, 'updateMe']);
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::apiResource('/students', StudentController::class);
     Route::get('/professionals', [StudentAssignmentController::class, 'professionals']);
@@ -51,6 +55,12 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/task-templates', [TaskTemplateController::class, 'index']);
     Route::get('/task-categories', [TaskCategoryController::class, 'index']);
     Route::post('/task-categories', [TaskCategoryController::class, 'store']);
+    Route::get('/media-library', [MediaLibraryController::class, 'index']);
+    Route::post('/media-library', [MediaLibraryController::class, 'store']);
+    Route::get('/media-library/{item}/download', [MediaLibraryController::class, 'download']);
+    Route::delete('/media-library/{item}', [MediaLibraryController::class, 'destroy']);
+    Route::get('/student-diagnoses', [StudentDiagnosisController::class, 'index']);
+    Route::post('/student-diagnoses', [StudentDiagnosisController::class, 'store']);
     Route::post('/task-templates', [TaskTemplateController::class, 'store']);
     Route::put('/task-templates/{taskTemplate}', [TaskTemplateController::class, 'update']);
     Route::post('/task-templates/{taskTemplate}/duplicate', [TaskTemplateController::class, 'duplicate']);
@@ -61,4 +71,8 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/tasks', [SessionTaskController::class, 'store']);
     Route::put('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/tasks/{sessionTask}', [SessionTaskController::class, 'update']);
     Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/tasks/{sessionTask}', [SessionTaskController::class, 'destroy']);
+    Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/materials', [SessionMaterialController::class, 'index']);
+    Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/materials', [SessionMaterialController::class, 'store']);
+    Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/materials/{material}/download', [SessionMaterialController::class, 'download']);
+    Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/materials/{material}', [SessionMaterialController::class, 'destroy']);
 });

@@ -5,10 +5,12 @@ import TaskBankSection from './features/taskTemplates/components/TaskBankSection
 import FeedbackMessage from './shared/components/FeedbackMessage'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
+const PAGE_SIZE = 10
 const initialStudent = {
   full_name: '',
   rut: '',
-  current_diagnosis: '',
+  student_diagnosis_id: '',
+  new_diagnosis_name: '',
   school_level_id: '',
   school_course_id: '',
   guardian_name: '',
@@ -25,6 +27,15 @@ const ratingToScore = {
   por_lograr: 2,
   logrado: 3,
 }
+const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary'])
+
+function getSectionFromPath(pathname) {
+  const cleanPath = String(pathname || '').replace(/\/+$/, '')
+  const parts = cleanPath.split('/').filter(Boolean)
+  if (parts[0] !== 'dashboard') return 'overview'
+  const candidate = parts[1] || 'overview'
+  return validSections.has(candidate) ? candidate : 'overview'
+}
 
 function App() {
   const [status, setStatus] = useState('Inicializando...')
@@ -33,6 +44,7 @@ function App() {
   const [professions, setProfessions] = useState([])
   const [levels, setLevels] = useState([])
   const [students, setStudents] = useState([])
+  const [studentDiagnoses, setStudentDiagnoses] = useState([])
   const [authForm, setAuthForm] = useState({
     name: '',
     rut: '',
@@ -48,7 +60,20 @@ function App() {
     password: '',
     password_confirmation: '',
   })
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    rut: '',
+    email: '',
+    profession_id: '',
+    password: '',
+    password_confirmation: '',
+  })
   const [studentForm, setStudentForm] = useState(initialStudent)
+  const [studentFilters, setStudentFilters] = useState({
+    search: '',
+    course: '',
+    diagnosis: '',
+  })
   const [editingId, setEditingId] = useState(null)
   const [showStudentModal, setShowStudentModal] = useState(false)
   const [isStudentModalVisible, setIsStudentModalVisible] = useState(false)
@@ -74,6 +99,7 @@ function App() {
     status: 'pendiente',
   })
   const [taskTemplates, setTaskTemplates] = useState([])
+  const [mediaLibraryItems, setMediaLibraryItems] = useState([])
   const [taskCategories, setTaskCategories] = useState([])
   const [taskTemplateFilters, setTaskTemplateFilters] = useState({
     q: '',
@@ -96,6 +122,17 @@ function App() {
   const [sessionObservation, setSessionObservation] = useState('')
   const [suspensionReason, setSuspensionReason] = useState('estudiante_ausente')
   const [sessionTasks, setSessionTasks] = useState([])
+  const [sessionMaterials, setSessionMaterials] = useState([])
+  const [sessionMaterialForm, setSessionMaterialForm] = useState({
+    title: '',
+    media_library_item_id: '',
+    file: null,
+  })
+  const [mediaLibraryForm, setMediaLibraryForm] = useState({
+    title: '',
+    file: null,
+  })
+  const [isUploadingSessionMaterial, setIsUploadingSessionMaterial] = useState(false)
   const [taskForm, setTaskForm] = useState({
     task_template_id: '',
     task_template_ids: [],
@@ -107,23 +144,68 @@ function App() {
   const [, setEditingTaskId] = useState(null)
   const [taskHistory, setTaskHistory] = useState([])
   const [todaySessions, setTodaySessions] = useState([])
-  const [activeSection, setActiveSection] = useState('overview')
+  const [studentsPage, setStudentsPage] = useState(1)
+  const [plansPage, setPlansPage] = useState(1)
+  const [sessionsPage, setSessionsPage] = useState(1)
+  const [activeSection, setActiveSectionState] = useState(() => getSectionFromPath(window.location.pathname))
   const [toast, setToast] = useState({ show: false, type: 'success', message: '' })
   const healthUrl = useMemo(() => `${apiBaseUrl}/health`, [])
 
+  const setActiveSection = useCallback((nextSection) => {
+    setActiveSectionState(nextSection)
+    if (!token) return
+    if (!validSections.has(nextSection)) return
+    const nextPath = `/dashboard/${nextSection}`
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, '', nextPath)
+    }
+  }, [token])
+
   const api = useCallback(async (path, options = {}) => {
+    const { skipAuth = false, headers: optionHeaders, ...fetchOptions } = options
+    const sendAuth = Boolean(token && !skipAuth)
+    const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
+
     const response = await fetch(`${apiBaseUrl}${path}`, {
-      ...options,
+      ...fetchOptions,
       headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.headers || {}),
+        Accept: 'application/json',
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...(sendAuth ? { Authorization: `Bearer ${token}` } : {}),
+        ...(optionHeaders || {}),
       },
     })
 
-    if (response.status === 204) return null
-    const data = await response.json()
-    if (!response.ok) throw new Error(data.message || 'Error en solicitud')
+    if (response.status === 204) {
+      return null
+    }
+
+    const responseText = await response.text()
+    let data = {}
+    if (responseText) {
+      try {
+        data = JSON.parse(responseText)
+      } catch {
+        throw new Error(response.ok ? 'Respuesta inválida del servidor.' : `Error del servidor (${response.status}).`)
+      }
+    }
+
+    if (response.status === 401) {
+      if (sendAuth) {
+        localStorage.removeItem('token')
+        setToken('')
+        setCurrentUser(null)
+      }
+      throw new Error(data.message || 'Sesión expirada. Inicia sesión nuevamente.')
+    }
+
+    if (!response.ok) {
+      const validationDetail = data.errors && typeof data.errors === 'object'
+        ? Object.values(data.errors).flat().filter(Boolean).join(' ')
+        : ''
+      throw new Error(data.message || validationDetail || 'Error en solicitud')
+    }
+
     return data
   }, [token])
 
@@ -154,6 +236,15 @@ function App() {
     try {
       const data = await api('/students')
       setStudents(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }, [api])
+
+  const loadStudentDiagnoses = useCallback(async () => {
+    try {
+      const data = await api('/student-diagnoses')
+      setStudentDiagnoses(data)
     } catch (error) {
       setStatus(error.message)
     }
@@ -204,6 +295,15 @@ function App() {
     }
   }, [api])
 
+  const loadMediaLibraryItems = useCallback(async () => {
+    try {
+      const data = await api('/media-library')
+      setMediaLibraryItems(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }, [api])
+
   const onTaskTemplateFilterChange = useCallback((field, value) => {
     setTaskTemplateFilters((prev) => ({ ...prev, [field]: value }))
   }, [])
@@ -219,11 +319,60 @@ function App() {
   useEffect(() => {
     const load = async () => {
       if (token) {
-        await Promise.all([loadStudents(), loadTaskTemplates(), loadTaskCategories(), loadCurrentUser()])
+        await Promise.all([
+          loadStudents(),
+          loadTaskTemplates(),
+          loadTaskCategories(),
+          loadMediaLibraryItems(),
+          loadStudentDiagnoses(),
+          loadCurrentUser(),
+        ])
       }
     }
     load()
-  }, [token, loadStudents, loadTaskTemplates, loadTaskCategories, loadCurrentUser])
+  }, [token, loadStudents, loadTaskTemplates, loadTaskCategories, loadMediaLibraryItems, loadStudentDiagnoses, loadCurrentUser])
+
+  useEffect(() => {
+    if (!currentUser) {
+      setProfileForm({
+        name: '',
+        rut: '',
+        email: '',
+        profession_id: '',
+        password: '',
+        password_confirmation: '',
+      })
+      return
+    }
+
+    setProfileForm({
+      name: currentUser.name || '',
+      rut: currentUser.rut || '',
+      email: currentUser.email || '',
+      profession_id: currentUser.profession_id ? String(currentUser.profession_id) : '',
+      password: '',
+      password_confirmation: '',
+    })
+  }, [currentUser])
+
+  useEffect(() => {
+    const onPopState = () => {
+      setActiveSectionState(getSectionFromPath(window.location.pathname))
+    }
+
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  useEffect(() => {
+    if (!token) return
+    const sectionFromPath = getSectionFromPath(window.location.pathname)
+    setActiveSectionState(sectionFromPath)
+    const normalizedPath = `/dashboard/${sectionFromPath}`
+    if (window.location.pathname !== normalizedPath) {
+      window.history.replaceState({}, '', normalizedPath)
+    }
+  }, [token])
 
   useEffect(() => {
     // Permite animar salida antes de desmontar visualmente el modal.
@@ -316,6 +465,18 @@ function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [showPlanModal])
+
+  useEffect(() => {
+    setStudentsPage(1)
+  }, [studentFilters.search, studentFilters.course, studentFilters.diagnosis])
+
+  useEffect(() => {
+    setPlansPage(1)
+  }, [selectedStudent?.id, plans.length])
+
+  useEffect(() => {
+    setSessionsPage(1)
+  }, [selectedPlan?.id, sessions.length])
 
   useEffect(() => {
     if (!showSessionModal) return
@@ -427,6 +588,7 @@ function App() {
       const data = await api('/auth/register', {
         method: 'POST',
         body: JSON.stringify(authForm),
+        skipAuth: true,
       })
       localStorage.setItem('token', data.token)
       setToken(data.token)
@@ -439,9 +601,10 @@ function App() {
   async function onLogin(e) {
     e.preventDefault()
     try {
-      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify(loginForm) })
+      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify(loginForm), skipAuth: true })
       localStorage.setItem('token', data.token)
       setToken(data.token)
+      setCurrentUser(data.user || null)
       setStatus('Login correcto')
     } catch (error) {
       setStatus(error.message)
@@ -454,6 +617,7 @@ function App() {
       const data = await api('/auth/forgot-password', {
         method: 'POST',
         body: JSON.stringify(forgotForm),
+        skipAuth: true,
       })
       setStatus(data.message || 'Si el email existe, se envio el enlace.')
     } catch (error) {
@@ -467,9 +631,42 @@ function App() {
       const data = await api('/auth/reset-password', {
         method: 'POST',
         body: JSON.stringify(resetForm),
+        skipAuth: true,
       })
       setStatus(data.message || 'Contrasena actualizada.')
       setResetForm({ token: '', email: '', password: '', password_confirmation: '' })
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onSaveProfile(e) {
+    e.preventDefault()
+
+    if (!currentUser) return
+
+    try {
+      const payload = {
+        name: profileForm.name,
+        rut: profileForm.rut,
+        email: profileForm.email,
+        profession_id: Number(profileForm.profession_id),
+        password: profileForm.password || null,
+        password_confirmation: profileForm.password_confirmation || null,
+      }
+
+      const updatedUser = await api('/auth/me', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+
+      setCurrentUser(updatedUser || null)
+      setProfileForm((prev) => ({
+        ...prev,
+        password: '',
+        password_confirmation: '',
+      }))
+      setStatus('Perfil actualizado correctamente')
     } catch (error) {
       setStatus(error.message)
     }
@@ -484,7 +681,9 @@ function App() {
       setCurrentUser(null)
       setStudents([])
       setTaskTemplates([])
+      setMediaLibraryItems([])
       setTaskCategories([])
+      setStudentDiagnoses([])
     }
   }
 
@@ -613,12 +812,56 @@ function App() {
     const method = editingId ? 'PUT' : 'POST'
 
     const isCreating = !editingId
+    let diagnosisIdRaw = studentForm.student_diagnosis_id
+    if (diagnosisIdRaw === '__new__') {
+      diagnosisIdRaw = ''
+    }
+    const newDiagnosisName = (studentForm.new_diagnosis_name || '').trim()
+
+    if (!diagnosisIdRaw && !newDiagnosisName) {
+      const message = 'Selecciona un diagnóstico o crea uno nuevo.'
+      setStatus(message)
+      if (isCreating) {
+        setToast({ show: true, type: 'error', message })
+      }
+      return
+    }
+
     try {
-      await api(path, { method, body: JSON.stringify(studentForm) })
+      let studentDiagnosisId = diagnosisIdRaw ? Number(diagnosisIdRaw) : null
+      if (newDiagnosisName) {
+        const created = await api('/student-diagnoses', {
+          method: 'POST',
+          body: JSON.stringify({ name: newDiagnosisName }),
+        })
+        studentDiagnosisId = created.id
+      }
+
+      if (!studentDiagnosisId) {
+        const message = 'Selecciona un diagnóstico o crea uno nuevo.'
+        setStatus(message)
+        if (isCreating) {
+          setToast({ show: true, type: 'error', message })
+        }
+        return
+      }
+
+      const payload = {
+        full_name: studentForm.full_name,
+        rut: studentForm.rut,
+        student_diagnosis_id: studentDiagnosisId,
+        school_level_id: Number(studentForm.school_level_id),
+        school_course_id: Number(studentForm.school_course_id),
+        guardian_name: studentForm.guardian_name,
+        guardian_phone: studentForm.guardian_phone,
+        guardian_email: studentForm.guardian_email,
+      }
+
+      await api(path, { method, body: JSON.stringify(payload) })
       setStudentForm(initialStudent)
       setEditingId(null)
       setShowStudentModal(false)
-      await loadStudents()
+      await Promise.all([loadStudents(), loadStudentDiagnoses()])
       setStatus('Estudiante guardado')
       if (isCreating) {
         setToast({
@@ -655,7 +898,8 @@ function App() {
     setStudentForm({
       full_name: student.full_name,
       rut: student.rut,
-      current_diagnosis: student.current_diagnosis,
+      student_diagnosis_id: student.student_diagnosis_id ? String(student.student_diagnosis_id) : '__new__',
+      new_diagnosis_name: student.student_diagnosis_id ? '' : (student.current_diagnosis || ''),
       school_level_id: String(student.school_level_id),
       school_course_id: String(student.school_course_id),
       guardian_name: student.guardian_name,
@@ -741,6 +985,7 @@ function App() {
     setEditingSessionId(null)
     setSelectedSession(null)
     setSessionTasks([])
+    setSessionMaterials([])
     setEditingTaskId(null)
     setTaskForm({
       task_template_id: '',
@@ -764,6 +1009,7 @@ function App() {
       } else {
         setSelectedSession(null)
         setSessionTasks([])
+        setSessionMaterials([])
       }
     } catch (error) {
       setStatus(error.message)
@@ -874,14 +1120,157 @@ function App() {
     })
     setSessionObservation(session.general_observation || '')
     setSuspensionReason('estudiante_ausente')
+    setSessionMaterialForm({ title: '', media_library_item_id: '', file: null })
     setShowTaskModal(false)
     setTaskCreationMode('manual')
 
     try {
-      const data = await api(
-        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`,
+      const [tasksData, materialsData] = await Promise.all([
+        api(`/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`),
+        api(`/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/materials`),
+      ])
+      setSessionTasks(tasksData)
+      setSessionMaterials(materialsData)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onUploadSessionMaterial(e) {
+    e.preventDefault()
+    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    const formData = new FormData()
+    const selectedLibraryItemId = sessionMaterialForm.media_library_item_id
+      ? Number(sessionMaterialForm.media_library_item_id)
+      : null
+
+    if (selectedLibraryItemId) {
+      formData.append('media_library_item_id', String(selectedLibraryItemId))
+      if (sessionMaterialForm.title.trim()) {
+        formData.append('title', sessionMaterialForm.title.trim())
+      }
+    } else {
+      if (!sessionMaterialForm.file) {
+        setStatus('Selecciona un recurso de la biblioteca o sube un archivo.')
+        return
+      }
+
+      const title = sessionMaterialForm.title.trim() || sessionMaterialForm.file.name
+      formData.append('title', title)
+      formData.append('file', sessionMaterialForm.file)
+    }
+
+    try {
+      setIsUploadingSessionMaterial(true)
+      await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/materials`,
+        {
+          method: 'POST',
+          body: formData,
+        },
       )
-      setSessionTasks(data)
+      setSessionMaterialForm({ title: '', media_library_item_id: '', file: null })
+      await Promise.all([onSelectSession(selectedSession), loadMediaLibraryItems()])
+      setStatus('Material complementario cargado')
+    } catch (error) {
+      setStatus(error.message)
+    } finally {
+      setIsUploadingSessionMaterial(false)
+    }
+  }
+
+  async function onDeleteSessionMaterial(materialId) {
+    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    if (!window.confirm('Eliminar material complementario de la sesión?')) return
+    try {
+      await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/materials/${materialId}`,
+        { method: 'DELETE' },
+      )
+      await onSelectSession(selectedSession)
+      setStatus('Material eliminado')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onDownloadSessionMaterial(material) {
+    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/materials/${material.id}/download`,
+        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
+      )
+      if (!response.ok) throw new Error('No se pudo descargar el material')
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = material.media_item?.stored_name || material.original_name || `material-${material.id}`
+      a.click()
+      window.URL.revokeObjectURL(url)
+      setStatus('Material descargado')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onUploadMediaLibraryItem(e) {
+    e.preventDefault()
+    if (!mediaLibraryForm.file) {
+      setStatus('Selecciona un archivo para subir a la biblioteca.')
+      return
+    }
+
+    const formData = new FormData()
+    if (mediaLibraryForm.title.trim()) {
+      formData.append('title', mediaLibraryForm.title.trim())
+    }
+    formData.append('file', mediaLibraryForm.file)
+
+    try {
+      await api('/media-library', {
+        method: 'POST',
+        body: formData,
+      })
+      setMediaLibraryForm({ title: '', file: null })
+      await loadMediaLibraryItems()
+      setStatus('Recurso guardado en biblioteca')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onDeleteMediaLibraryItem(item) {
+    const confirmation = window.confirm(
+      `Eliminar "${item.stored_name}" de la biblioteca?\n\nAdvertencia: se eliminará en todas las sesiones donde esté vinculado.`,
+    )
+    if (!confirmation) return
+
+    try {
+      await api(`/media-library/${item.id}`, { method: 'DELETE' })
+      await Promise.all([loadMediaLibraryItems(), selectedSession ? onSelectSession(selectedSession) : Promise.resolve()])
+      setStatus('Recurso eliminado de biblioteca y sesiones vinculadas')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onDownloadMediaLibraryItem(item) {
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/media-library/${item.id}/download`,
+        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
+      )
+      if (!response.ok) throw new Error('No se pudo descargar el recurso')
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = item.stored_name || item.original_name || `media-${item.id}`
+      a.click()
+      window.URL.revokeObjectURL(url)
+      setStatus('Recurso descargado')
     } catch (error) {
       setStatus(error.message)
     }
@@ -1069,6 +1458,56 @@ function App() {
 
   const selectedLevel = levels.find((level) => String(level.id) === String(studentForm.school_level_id))
   const availableCourses = selectedLevel?.courses ?? []
+  const studentCourseOptions = useMemo(() => {
+    const uniqueCourses = new Map()
+    students.forEach((student) => {
+      const name = student.course?.display_name
+      if (name && !uniqueCourses.has(name)) {
+        uniqueCourses.set(name, name)
+      }
+    })
+    return Array.from(uniqueCourses.keys()).sort((a, b) => a.localeCompare(b))
+  }, [students])
+  const filteredStudents = useMemo(() => {
+    const search = studentFilters.search.trim().toLowerCase()
+    const diagnosis = studentFilters.diagnosis.trim().toLowerCase()
+
+    return students.filter((student) => {
+      const matchesSearch = !search || [
+        student.full_name,
+        student.rut,
+        student.guardian_name,
+        student.guardian_email,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(search))
+
+      const matchesCourse = !studentFilters.course || (student.course?.display_name || '') === studentFilters.course
+
+      const diagnosisLabel = (student.student_diagnosis?.name || student.current_diagnosis || '').toLowerCase()
+      const matchesDiagnosis = !diagnosis || diagnosisLabel.includes(diagnosis)
+
+      return matchesSearch && matchesCourse && matchesDiagnosis
+    })
+  }, [students, studentFilters])
+  const studentsTotalPages = Math.max(1, Math.ceil(filteredStudents.length / PAGE_SIZE))
+  const safeStudentsPage = Math.min(studentsPage, studentsTotalPages)
+  const paginatedStudents = useMemo(() => {
+    const start = (safeStudentsPage - 1) * PAGE_SIZE
+    return filteredStudents.slice(start, start + PAGE_SIZE)
+  }, [filteredStudents, safeStudentsPage])
+  const plansTotalPages = Math.max(1, Math.ceil(plans.length / PAGE_SIZE))
+  const safePlansPage = Math.min(plansPage, plansTotalPages)
+  const paginatedPlans = useMemo(() => {
+    const start = (safePlansPage - 1) * PAGE_SIZE
+    return plans.slice(start, start + PAGE_SIZE)
+  }, [plans, safePlansPage])
+  const sessionsTotalPages = Math.max(1, Math.ceil(sessions.length / PAGE_SIZE))
+  const safeSessionsPage = Math.min(sessionsPage, sessionsTotalPages)
+  const paginatedSessions = useMemo(() => {
+    const start = (safeSessionsPage - 1) * PAGE_SIZE
+    return sessions.slice(start, start + PAGE_SIZE)
+  }, [sessions, safeSessionsPage])
   const formatDisplayDate = (dateValue) => {
     if (!dateValue) return '-'
     const [year, month, day] = String(dateValue).split('-')
@@ -1121,6 +1560,55 @@ function App() {
     const reason = getSuspensionReasonLabel(session?.general_observation)
     return reason ? `suspendida (${reason})` : 'suspendida'
   }
+  const apiOrigin = apiBaseUrl.replace(/\/api\/?$/, '')
+  const getStoragePublicUrl = (storagePath) => {
+    if (!storagePath) return ''
+    const encodedPath = String(storagePath)
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/')
+    return `${apiOrigin}/storage/${encodedPath}`
+  }
+  const renderMediaPreview = (item) => {
+    const mimeType = (item.mime_type || '').toLowerCase()
+    const fileName = (item.stored_name || item.original_name || '').toLowerCase()
+    const imageUrl = getStoragePublicUrl(item.storage_path)
+
+    if (mimeType.startsWith('image/') && imageUrl) {
+      return (
+        <img
+          src={imageUrl}
+          alt={item.title || item.stored_name || 'Imagen'}
+          className="h-10 w-10 rounded-[5px] border border-slate-200 object-cover"
+          loading="lazy"
+        />
+      )
+    }
+
+    const isPpt = mimeType.includes('presentation') || mimeType.includes('powerpoint') || fileName.endsWith('.ppt') || fileName.endsWith('.pptx')
+    if (isPpt) {
+      return (
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-[5px] border border-orange-200 bg-orange-50 text-xs font-bold text-orange-700">
+          PPT
+        </span>
+      )
+    }
+
+    const isDoc = mimeType.includes('word') || fileName.endsWith('.doc') || fileName.endsWith('.docx')
+    if (isDoc) {
+      return (
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-[5px] border border-blue-200 bg-blue-50 text-xs font-bold text-blue-700">
+          DOC
+        </span>
+      )
+    }
+
+    return (
+      <span className="inline-flex h-10 w-10 items-center justify-center rounded-[5px] border border-slate-200 bg-slate-50 text-xs font-bold text-slate-600">
+        FILE
+      </span>
+    )
+  }
   const chartWidth = 720
   const chartHeight = 220
   const chartPadding = 28
@@ -1136,6 +1624,21 @@ function App() {
     return { ...entry, x, y }
   })
   const polylinePoints = chartPoints.map((point) => `${point.x},${point.y}`).join(' ')
+  const renderPagination = (currentPage, totalPages, onPrev, onNext) => (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+      <span>
+        Página {currentPage} de {totalPages}
+      </span>
+      <div className="flex items-center gap-2">
+        <button type="button" className="actionButton" onClick={onPrev} disabled={currentPage === 1}>
+          Anterior
+        </button>
+        <button type="button" className="actionButton" onClick={onNext} disabled={currentPage === totalPages}>
+          Siguiente
+        </button>
+      </div>
+    </div>
+  )
 
   return (
     <AppRouter
@@ -1281,6 +1784,12 @@ function App() {
                 >
                   Banco de tareas
                 </button>
+                <button
+                  className={`actionButton w-full text-left ${activeSection === 'mediaLibrary' ? 'actionButtonPrimary' : ''}`}
+                  onClick={() => setActiveSection('mediaLibrary')}
+                >
+                  Biblioteca de medios
+                </button>
               </div>
             </aside>
 
@@ -1408,15 +1917,88 @@ function App() {
 
               {activeSection === 'profile' && (
                 <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <h2 className="text-base font-semibold text-slate-900">Mi perfil</h2>
-                  {currentUser ? (
-                    <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2">
-                      <p><strong>Nombre:</strong> {currentUser.name}</p>
-                      <p><strong>Email:</strong> {currentUser.email}</p>
-                      <p><strong>RUT:</strong> {currentUser.rut || '-'}</p>
-                      <p><strong>Rol:</strong> {currentUser.role || '-'}</p>
-                      <p><strong>Profesión:</strong> {currentUser.profession?.name || '-'}</p>
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">Mi perfil</h2>
+                      <p className="mt-1 text-sm text-slate-500">Actualiza tus datos personales y profesionales.</p>
                     </div>
+                    {currentUser && (
+                      <span className="rounded-[5px] border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-600">
+                        Rol: {currentUser.role || '-'}
+                      </span>
+                    )}
+                  </div>
+                  {currentUser ? (
+                    <form onSubmit={onSaveProfile} className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-name">Nombre</label>
+                        <input
+                          id="profile-name"
+                          className="fieldInput mb-0"
+                          value={profileForm.name}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-rut">RUT</label>
+                        <input
+                          id="profile-rut"
+                          className="fieldInput mb-0"
+                          value={profileForm.rut}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, rut: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-email">Email</label>
+                        <input
+                          id="profile-email"
+                          type="email"
+                          className="fieldInput mb-0"
+                          value={profileForm.email}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, email: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-profession">Profesión</label>
+                        <select
+                          id="profile-profession"
+                          className="fieldInput mb-0"
+                          value={profileForm.profession_id}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, profession_id: e.target.value }))}
+                        >
+                          <option value="">Selecciona profesión</option>
+                          {professions.map((profession) => (
+                            <option key={profession.id} value={profession.id}>{profession.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-password">Nueva contraseña (opcional)</label>
+                        <input
+                          id="profile-password"
+                          type="password"
+                          className="fieldInput mb-0"
+                          placeholder="Dejar vacío para mantener actual"
+                          value={profileForm.password}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, password: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-password-confirmation">Confirmar nueva contraseña</label>
+                        <input
+                          id="profile-password-confirmation"
+                          type="password"
+                          className="fieldInput mb-0"
+                          value={profileForm.password_confirmation}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, password_confirmation: e.target.value }))}
+                        />
+                      </div>
+                      <div className="md:col-span-2 flex justify-end">
+                        <button type="submit" className="actionButton actionButtonPrimary">
+                          Guardar cambios
+                        </button>
+                      </div>
+                    </form>
                   ) : (
                     <p className="mt-3 text-sm text-slate-500">No fue posible cargar los datos de perfil.</p>
                   )}
@@ -1446,6 +2028,77 @@ function App() {
               />
             )}
 
+            {activeSection === 'mediaLibrary' && (
+              <section className="sectionCard">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h2 className="sectionTitle mb-0">Biblioteca de medios</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Reutiliza recursos sin volver a subirlos en cada sesión.
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={onUploadMediaLibraryItem} className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-[1.3fr_1fr_auto]">
+                  <input
+                    className="fieldInput mb-0"
+                    placeholder="Título del recurso (opcional)"
+                    value={mediaLibraryForm.title}
+                    onChange={(e) => setMediaLibraryForm((prev) => ({ ...prev, title: e.target.value }))}
+                  />
+                  <input
+                    type="file"
+                    className="fieldInput mb-0"
+                    onChange={(e) => setMediaLibraryForm((prev) => ({ ...prev, file: e.target.files?.[0] || null }))}
+                  />
+                  <button type="submit" className="actionButton actionButtonPrimary">
+                    Subir a biblioteca
+                  </button>
+                </form>
+
+                <div className="overflow-x-auto rounded-[5px] border border-slate-200">
+                  <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Vista previa</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Título</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Archivo</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Uso en sesiones</th>
+                        <th className="px-3 py-2 text-right font-semibold text-slate-600">Opciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {mediaLibraryItems.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                            Aún no hay recursos en tu biblioteca.
+                          </td>
+                        </tr>
+                      )}
+                      {mediaLibraryItems.map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 text-slate-700">{renderMediaPreview(item)}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.title}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.stored_name || item.original_name}</td>
+                          <td className="px-3 py-2 text-slate-700">{item.session_materials_count || 0}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button type="button" className="actionButton" onClick={() => onDownloadMediaLibraryItem(item)}>
+                                Descargar
+                              </button>
+                              <button type="button" className="actionButton" onClick={() => onDeleteMediaLibraryItem(item)}>
+                                Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
             {activeSection === 'students' && (
               <>
                 <section className="sectionCard">
@@ -1454,6 +2107,30 @@ function App() {
                     <button className="actionButton actionButtonPrimary" onClick={onOpenCreateStudentModal}>
                       Registrar estudiante
                     </button>
+                  </div>
+                  <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <input
+                      className="fieldInput mb-0"
+                      placeholder="Buscar por nombre, RUT o apoderado"
+                      value={studentFilters.search}
+                      onChange={(e) => setStudentFilters((prev) => ({ ...prev, search: e.target.value }))}
+                    />
+                    <select
+                      className="fieldInput mb-0"
+                      value={studentFilters.course}
+                      onChange={(e) => setStudentFilters((prev) => ({ ...prev, course: e.target.value }))}
+                    >
+                      <option value="">Curso: todos</option>
+                      {studentCourseOptions.map((courseName) => (
+                        <option key={courseName} value={courseName}>{courseName}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="fieldInput mb-0"
+                      placeholder="Filtrar por diagnóstico"
+                      value={studentFilters.diagnosis}
+                      onChange={(e) => setStudentFilters((prev) => ({ ...prev, diagnosis: e.target.value }))}
+                    />
                   </div>
                   <div className="overflow-x-auto rounded-[5px] border border-slate-200">
                     <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
@@ -1467,21 +2144,21 @@ function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {students.length === 0 && (
+                        {filteredStudents.length === 0 && (
                           <tr>
                             <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
-                              No hay estudiantes registrados.
+                              No hay estudiantes para los filtros seleccionados.
                             </td>
                           </tr>
                         )}
-                        {students.map((student) => (
+                        {paginatedStudents.map((student) => (
                           <tr key={student.id} className="hover:bg-slate-50">
                             <td className="px-3 py-3">
                               <p className="font-medium text-slate-900">{student.full_name}</p>
                               <p className="text-xs text-slate-500">RUT: {student.rut}</p>
                             </td>
                             <td className="px-3 py-3 text-slate-700">{student.course?.display_name || 'Sin curso'}</td>
-                            <td className="px-3 py-3 text-slate-700">{student.current_diagnosis}</td>
+                            <td className="px-3 py-3 text-slate-700">{student.student_diagnosis?.name || student.current_diagnosis}</td>
                             <td className="px-3 py-3">
                               <p className="text-slate-700">{student.guardian_name}</p>
                               <p className="text-xs text-slate-500">{student.guardian_email}</p>
@@ -1513,6 +2190,12 @@ function App() {
                       </tbody>
                     </table>
                   </div>
+                  {filteredStudents.length > PAGE_SIZE && renderPagination(
+                    safeStudentsPage,
+                    studentsTotalPages,
+                    () => setStudentsPage((prev) => Math.max(1, prev - 1)),
+                    () => setStudentsPage((prev) => Math.min(studentsTotalPages, prev + 1)),
+                  )}
 
                 </section>
               </>
@@ -1560,7 +2243,7 @@ function App() {
                           </td>
                         </tr>
                       )}
-                      {plans.map((plan) => (
+                      {paginatedPlans.map((plan) => (
                         <tr key={plan.id} className="hover:bg-slate-50">
                           <td className="px-3 py-3 font-medium text-slate-900">{plan.year}</td>
                           <td className="px-3 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
@@ -1591,6 +2274,12 @@ function App() {
                     </tbody>
                   </table>
                 </div>
+                {plans.length > PAGE_SIZE && renderPagination(
+                  safePlansPage,
+                  plansTotalPages,
+                  () => setPlansPage((prev) => Math.max(1, prev - 1)),
+                  () => setPlansPage((prev) => Math.min(plansTotalPages, prev + 1)),
+                )}
 
               </section>
             )}
@@ -1737,7 +2426,7 @@ function App() {
                           </td>
                         </tr>
                       )}
-                      {sessions.map((session) => (
+                      {paginatedSessions.map((session) => (
                         <tr key={session.id} className="hover:bg-slate-50">
                           <td className="px-3 py-3 text-slate-700">{formatDisplayDate(session.session_date)}</td>
                           <td className="px-3 py-3 text-slate-700">{session.objective}</td>
@@ -1789,6 +2478,12 @@ function App() {
                     </tbody>
                   </table>
                 </div>
+                {sessions.length > PAGE_SIZE && renderPagination(
+                  safeSessionsPage,
+                  sessionsTotalPages,
+                  () => setSessionsPage((prev) => Math.max(1, prev - 1)),
+                  () => setSessionsPage((prev) => Math.min(sessionsTotalPages, prev + 1)),
+                )}
 
               </section>
             )}
@@ -1940,6 +2635,97 @@ function App() {
                     onChange={(e) => setSessionObservation(e.target.value)}
                     disabled={selectedSession.status === 'finalizada'}
                   />
+                </section>
+
+                <section className={`mt-4 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
+                  selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
+                }`}>
+                  <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                    Material complementario en sesión
+                  </h4>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Puedes reutilizar recursos desde tu biblioteca o subir uno nuevo desde tu PC.
+                  </p>
+
+                  <form onSubmit={onUploadSessionMaterial} className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1.4fr_1.2fr_1fr_auto]">
+                    <input
+                      className={`fieldInput mb-0 ${selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''}`}
+                      placeholder="Título del material (opcional)"
+                      value={sessionMaterialForm.title}
+                      onChange={(e) => setSessionMaterialForm((prev) => ({ ...prev, title: e.target.value }))}
+                      disabled={selectedSession.status === 'finalizada'}
+                    />
+                    <select
+                      className={`fieldInput mb-0 ${selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''}`}
+                      value={sessionMaterialForm.media_library_item_id}
+                      onChange={(e) => setSessionMaterialForm((prev) => ({ ...prev, media_library_item_id: e.target.value, file: null }))}
+                      disabled={selectedSession.status === 'finalizada'}
+                    >
+                      <option value="">Biblioteca: seleccionar recurso</option>
+                      {mediaLibraryItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.stored_name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="file"
+                      className={`fieldInput mb-0 ${selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''}`}
+                      onChange={(e) => setSessionMaterialForm((prev) => ({ ...prev, file: e.target.files?.[0] || null, media_library_item_id: '' }))}
+                      disabled={selectedSession.status === 'finalizada'}
+                    />
+                    <button
+                      type="submit"
+                      className="actionButton actionButtonPrimary"
+                      disabled={selectedSession.status === 'finalizada' || isUploadingSessionMaterial}
+                    >
+                      {isUploadingSessionMaterial ? 'Subiendo...' : 'Subir material'}
+                    </button>
+                  </form>
+
+                  <div className="mt-3 overflow-x-auto rounded-[5px] border border-slate-200">
+                    <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Título</th>
+                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Archivo</th>
+                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Peso</th>
+                          <th className="px-3 py-2 text-right font-semibold text-slate-600">Opciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sessionMaterials.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                              No hay material complementario cargado en esta sesión.
+                            </td>
+                          </tr>
+                        )}
+                        {sessionMaterials.map((material) => (
+                          <tr key={material.id} className="hover:bg-slate-50">
+                            <td className="px-3 py-2 text-slate-700">{material.title}</td>
+                            <td className="px-3 py-2 text-slate-700">{material.media_item?.stored_name || material.original_name}</td>
+                            <td className="px-3 py-2 text-slate-700">{Math.max(1, Math.round((material.size_bytes || 0) / 1024))} KB</td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <button type="button" className="actionButton" onClick={() => onDownloadSessionMaterial(material)}>
+                                  Descargar
+                                </button>
+                                <button
+                                  type="button"
+                                  className="actionButton"
+                                  onClick={() => onDeleteSessionMaterial(material.id)}
+                                  disabled={selectedSession.status === 'finalizada'}
+                                >
+                                  Eliminar
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </section>
 
                 <section className="mt-4 flex flex-wrap items-center gap-2">
@@ -2307,8 +3093,31 @@ function App() {
                       </div>
                       <div className="md:col-span-2">
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-diagnosis">Diagnóstico actual</label>
-                        <input id="student-diagnosis" className="fieldInput mb-0" placeholder="Diagnóstico actual" value={studentForm.current_diagnosis} onChange={(e) => setStudentForm({ ...studentForm, current_diagnosis: e.target.value })} />
+                        <select
+                          id="student-diagnosis"
+                          className="fieldInput mb-0"
+                          value={studentForm.student_diagnosis_id || ''}
+                          onChange={(e) => setStudentForm({ ...studentForm, student_diagnosis_id: e.target.value, new_diagnosis_name: '' })}
+                        >
+                          <option value="">Seleccionar diagnóstico</option>
+                          {studentDiagnoses.map((d) => (
+                            <option key={d.id} value={String(d.id)}>{d.name}</option>
+                          ))}
+                          <option value="__new__">+ Crear nuevo diagnóstico</option>
+                        </select>
                       </div>
+                      {studentForm.student_diagnosis_id === '__new__' && (
+                        <div className="md:col-span-2">
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-new-diagnosis">Nuevo diagnóstico</label>
+                          <input
+                            id="student-new-diagnosis"
+                            className="fieldInput mb-0"
+                            placeholder="Ej: TEL expresivo leve"
+                            value={studentForm.new_diagnosis_name}
+                            onChange={(e) => setStudentForm({ ...studentForm, new_diagnosis_name: e.target.value })}
+                          />
+                        </div>
+                      )}
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-level">Nivel</label>
                         <select id="student-level" className="fieldInput mb-0" value={studentForm.school_level_id} onChange={(e) => setStudentForm({ ...studentForm, school_level_id: e.target.value, school_course_id: '' })}>
