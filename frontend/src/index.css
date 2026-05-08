@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 body {
-  @apply m-0 bg-slate-100 text-slate-700 antialiased;
+  @apply m-0 text-slate-700 antialiased;
+  background-color: #f3f4f6;
 }
 
 #root {
@@ -10,10 +11,13 @@ body {
 
 .appShell {
   @apply min-h-screen w-full p-4 md:p-6;
+  background-color: #f3f4f6;
 }
 
 .sectionCard {
-  @apply rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm md:p-5;
+  @apply border bg-white p-4 shadow-sm md:p-5;
+  border-color: #e5e7eb;
+  border-radius: 10px;
 }
 
 .sectionTitle {
@@ -25,15 +29,33 @@ body {
 }
 
 .fieldInput {
-  @apply w-full rounded-[5px] border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200;
+  @apply w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:ring-2;
+  border-radius: 10px;
+}
+
+.fieldInput:focus {
+  border-color: #6e62e5;
+  --tw-ring-color: rgb(110 98 229 / 0.28);
 }
 
 .actionButton {
-  @apply rounded-[5px] border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200;
+  @apply border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2;
+  border-radius: 10px;
+}
+
+.actionButton:focus {
+  --tw-ring-color: rgb(110 98 229 / 0.28);
 }
 
 .actionButtonPrimary {
-  @apply border-blue-600 bg-blue-600 text-white hover:bg-blue-700;
+  border-color: #6e62e5;
+  background-color: #6e62e5;
+  color: #ffffff;
+}
+
+.actionButtonPrimary:hover {
+  border-color: #5b50cf;
+  background-color: #5b50cf;
 }
 
 .listBox {
@@ -41,16 +63,32 @@ body {
 }
 
 .listItem {
-  @apply rounded-[5px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700;
+  @apply border p-3 text-sm text-slate-700;
+  border-color: #e5e7eb;
+  background-color: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .appShell input,
 .appShell select {
-  @apply mb-2 w-full rounded-[5px] border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-200;
+  @apply mb-2 w-full border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:ring-2;
+  border-radius: 10px;
+}
+
+.appShell input:focus,
+.appShell select:focus {
+  border-color: #6e62e5;
+  --tw-ring-color: rgb(110 98 229 / 0.28);
 }
 
 .appShell button {
-  @apply mr-2 mb-2 rounded-[5px] border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-200;
+  @apply mr-2 mb-2 border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2;
+  border-radius: 10px;
+}
+
+.appShell button:focus {
+  --tw-ring-color: rgb(110 98 229 / 0.28);
 }
 
 .appShell ul {
@@ -58,7 +96,50 @@ body {
 }
 
 .appShell li {
-  @apply rounded-[5px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700;
+  @apply border p-3 text-sm text-slate-700;
+  border-color: #e5e7eb;
+  background-color: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.sidebarNavItem {
+  @apply w-full px-1 py-1 text-left text-sm font-medium text-slate-700 transition;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+}
+
+.sidebarNavItem:hover {
+  color: #334155;
+  background-color: #f3f0ff;
+}
+
+.sidebarNavItemActive {
+  color: #6e62e5;
+  background-color: #f3f0ff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sidebarNavItemContent {
+  @apply inline-flex items-center gap-2;
+}
+
+.sidebarNavItemIcon {
+  @apply inline-flex h-4 w-4 items-center justify-center text-slate-800;
+}
+
+.sidebarNavItem:hover .sidebarNavItemIcon {
+  @apply text-slate-700;
+}
+
+.sidebarNavItemActive .sidebarNavItemIcon {
+  color: #6e62e5;
+}
+
+.rounded-\[5px\] {
+  border-radius: 10px !important;
 }
 
 /* Regla general de usabilidad: elementos interactivos muestran "manito". */

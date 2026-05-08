@@ -14,6 +14,7 @@ class TherapySession extends Model
     protected $fillable = [
         'treatment_plan_id',
         'session_date',
+        'session_time',
         'status',
         'objective',
         'description',

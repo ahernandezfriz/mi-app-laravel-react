@@ -5,7 +5,7 @@ import ForgotPasswordPage from '../../features/auth/pages/ForgotPasswordPage'
 
 function AppRouter({ token, authProps, children }) {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/app">
       <Routes>
         <Route path="/" element={<Navigate to={token ? '/dashboard/overview' : '/login'} replace />} />
         <Route

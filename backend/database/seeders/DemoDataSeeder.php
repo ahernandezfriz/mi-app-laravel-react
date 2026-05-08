@@ -123,6 +123,7 @@ class DemoDataSeeder extends Seeder
                         $session = TherapySession::query()->create([
                             'treatment_plan_id' => $plan->id,
                             'session_date' => now()->subDays(4 - $sessionIndex)->toDateString(),
+                            'session_time' => sprintf('%02d:00:00', 8 + $sessionIndex),
                             'status' => 'pendiente',
                             'objective' => "Objetivo demo {$sessionIndex}",
                             'description' => "Sesion demo {$sessionIndex} para {$student->full_name}",

@@ -88,7 +88,7 @@ function RegisterPage({
       </form>
 
       <div className="mt-6 text-sm">
-        <Link to="/login" className="font-medium text-blue-700 hover:text-blue-900">
+        <Link to="/login" className="font-medium text-[#6e62e5] hover:text-[#4f45bd]">
           Volver a iniciar sesion
         </Link>
       </div>

@@ -98,10 +98,10 @@ function LoginPage({
       </form>
 
       <div className="mt-6 flex flex-col gap-2 text-sm">
-        <Link to="/register" className="font-medium text-blue-700 hover:text-blue-900">
+        <Link to="/register" className="font-medium text-[#6e62e5] hover:text-[#4f45bd]">
           Registrate
         </Link>
-        <Link to="/forgot-password" className="font-medium text-blue-700 hover:text-blue-900">
+        <Link to="/forgot-password" className="font-medium text-[#6e62e5] hover:text-[#4f45bd]">
           Olvide la contrasena
         </Link>
       </div>

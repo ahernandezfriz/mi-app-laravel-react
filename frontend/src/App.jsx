@@ -81,6 +81,7 @@ function App() {
   const [isPlanModalVisible, setIsPlanModalVisible] = useState(false)
   const [showSessionModal, setShowSessionModal] = useState(false)
   const [isSessionModalVisible, setIsSessionModalVisible] = useState(false)
+  const [sessionModalError, setSessionModalError] = useState('')
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [isTaskModalVisible, setIsTaskModalVisible] = useState(false)
   const [showSuspendModal, setShowSuspendModal] = useState(false)
@@ -94,6 +95,7 @@ function App() {
   const [editingSessionId, setEditingSessionId] = useState(null)
   const [sessionForm, setSessionForm] = useState({
     session_date: new Date().toISOString().slice(0, 10),
+    session_time: '09:00',
     objective: '',
     description: '',
     status: 'pendiente',
@@ -144,6 +146,12 @@ function App() {
   const [, setEditingTaskId] = useState(null)
   const [taskHistory, setTaskHistory] = useState([])
   const [todaySessions, setTodaySessions] = useState([])
+  const [overviewStats, setOverviewStats] = useState({
+    students: 0,
+    plans: 0,
+    finalizedSessions: 0,
+    pendingSessions: 0,
+  })
   const [studentsPage, setStudentsPage] = useState(1)
   const [plansPage, setPlansPage] = useState(1)
   const [sessionsPage, setSessionsPage] = useState(1)
@@ -240,6 +248,61 @@ function App() {
       setStatus(error.message)
     }
   }, [api])
+
+  const loadOverviewStats = useCallback(async () => {
+    if (!token) {
+      setOverviewStats({
+        students: 0,
+        plans: 0,
+        finalizedSessions: 0,
+        pendingSessions: 0,
+      })
+      return
+    }
+
+    if (students.length === 0) {
+      setOverviewStats({
+        students: 0,
+        plans: 0,
+        finalizedSessions: 0,
+        pendingSessions: 0,
+      })
+      return
+    }
+
+    try {
+      const plansByStudent = await Promise.all(
+        students.map(async (student) => ({
+          studentId: student.id,
+          plans: await api(`/students/${student.id}/treatment-plans`),
+        })),
+      )
+
+      const allPlans = plansByStudent.flatMap((entry) => entry.plans.map((plan) => ({ studentId: entry.studentId, plan })))
+
+      const sessionsByPlan = await Promise.all(
+        allPlans.map(async ({ studentId, plan }) =>
+          api(`/students/${studentId}/treatment-plans/${plan.id}/sessions`),
+        ),
+      )
+
+      const allSessions = sessionsByPlan.flat()
+      const finalizedSessions = allSessions.filter((session) => session.status === 'finalizada').length
+      const pendingSessions = allSessions.filter((session) => session.status !== 'finalizada').length
+
+      setOverviewStats({
+        students: students.length,
+        plans: allPlans.length,
+        finalizedSessions,
+        pendingSessions,
+      })
+    } catch {
+      setOverviewStats((prev) => ({
+        ...prev,
+        students: students.length,
+      }))
+    }
+  }, [api, students, token])
 
   const loadStudentDiagnoses = useCallback(async () => {
     try {
@@ -581,6 +644,11 @@ function App() {
 
     refreshDashboardData()
   }, [activeSection, loadStudents, loadTaskTemplates, token])
+
+  useEffect(() => {
+    if (!token || activeSection !== 'overview') return
+    loadOverviewStats()
+  }, [activeSection, loadOverviewStats, token, students.length])
 
   async function onRegister(e) {
     e.preventDefault()
@@ -997,6 +1065,7 @@ function App() {
     setTaskCreationMode('manual')
     setSessionForm({
       session_date: new Date().toISOString().slice(0, 10),
+      session_time: '09:00',
       objective: '',
       description: '',
       status: 'pendiente',
@@ -1025,6 +1094,7 @@ function App() {
       : `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions`
 
     try {
+      setSessionModalError('')
       const savedSession = await api(path, { method: isEditing ? 'PUT' : 'POST', body: JSON.stringify(sessionForm) })
       await onSelectPlan(selectedPlan)
       if (savedSession?.id) {
@@ -1033,15 +1103,18 @@ function App() {
       setShowSessionModal(false)
       setStatus(isEditing ? 'Sesion actualizada' : 'Sesion creada')
     } catch (error) {
+      setSessionModalError(error.message || 'No fue posible guardar la sesión.')
       setStatus(error.message)
     }
   }
 
   function onEditSession(session) {
     setEditingSessionId(session.id)
+    setSessionModalError('')
     setShowSessionModal(true)
     setSessionForm({
       session_date: session.session_date,
+      session_time: session.session_time ? String(session.session_time).slice(0, 5) : '09:00',
       objective: session.objective,
       description: session.description || '',
       status: session.status === 'draft' ? 'pendiente' : session.status,
@@ -1050,8 +1123,10 @@ function App() {
 
   function onOpenCreateSessionModal() {
     setEditingSessionId(null)
+    setSessionModalError('')
     setSessionForm({
       session_date: new Date().toISOString().slice(0, 10),
+      session_time: '09:00',
       objective: '',
       description: '',
       status: 'pendiente',
@@ -1345,6 +1420,7 @@ function App() {
           method: 'PUT',
           body: JSON.stringify({
             session_date: selectedSession.session_date,
+            session_time: selectedSession.session_time || '09:00',
             objective: selectedSession.objective,
             description: selectedSession.description || null,
             general_observation: generalObservation,
@@ -1514,10 +1590,23 @@ function App() {
     if (!year || !month || !day) return dateValue
     return `${day}-${month}-${year}`
   }
+  const formatDisplayTime = (timeValue) => {
+    if (!timeValue) return '--:--'
+    return String(timeValue).slice(0, 5)
+  }
   const currentYear = new Date().getFullYear()
   const todayDate = new Date().toISOString().slice(0, 10)
   const finalizedSessionsCount = sessions.filter((session) => session.status === 'finalizada').length
   const pendingSessionsCount = sessions.filter((session) => session.status !== 'finalizada').length
+  const sortedTodaySessions = useMemo(
+    () =>
+      [...todaySessions].sort((a, b) => {
+        const first = a.session.session_time || '23:59'
+        const second = b.session.session_time || '23:59'
+        return first.localeCompare(second)
+      }),
+    [todaySessions],
+  )
   const totalSessionsCount = sessions.length
   const suspendedSessions = sessions.filter((session) => session.status === 'suspendida')
   const sessionsUntilToday = sessions.filter((session) => session.session_date <= todayDate)
@@ -1597,7 +1686,7 @@ function App() {
     const isDoc = mimeType.includes('word') || fileName.endsWith('.doc') || fileName.endsWith('.docx')
     if (isDoc) {
       return (
-        <span className="inline-flex h-10 w-10 items-center justify-center rounded-[5px] border border-blue-200 bg-blue-50 text-xs font-bold text-blue-700">
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 text-xs font-bold text-fuchsia-800">
           DOC
         </span>
       )
@@ -1684,7 +1773,7 @@ function App() {
 
       {token && (
         <section className="w-full">
-          <header className="w-full bg-gradient-to-r from-blue-700 to-indigo-700 px-4 py-3 text-white md:px-6">
+          <header className="w-full bg-[#6e62e5] px-4 py-3 text-white md:px-6">
             <div className="flex w-full flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-[5px] bg-white/15 text-sm font-bold text-white">
@@ -1692,7 +1781,7 @@ function App() {
                 </div>
                 <div>
                   <p className="text-sm font-semibold">Mi App Terapias</p>
-                  <p className="text-xs text-blue-100">Dashboard profesional</p>
+                  <p className="text-xs text-[#ecebff]">Dashboard profesional</p>
                 </div>
               </div>
 
@@ -1737,63 +1826,114 @@ function App() {
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Menu</h2>
               <div className="flex flex-col gap-2">
                 <button
-                  className={`actionButton w-full text-left ${activeSection === 'overview' ? 'actionButtonPrimary' : ''}`}
+                  className={`sidebarNavItem ${activeSection === 'overview' ? 'sidebarNavItemActive' : ''}`}
                   onClick={() => setActiveSection('overview')}
                 >
-                  Dashboard
+                  <span className="sidebarNavItemContent">
+                    <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M4 20V10" strokeLinecap="round" />
+                      <path d="M10 20V4" strokeLinecap="round" />
+                      <path d="M16 20v-7" strokeLinecap="round" />
+                      <path d="M22 20v-4" strokeLinecap="round" />
+                    </svg>
+                    <span>Dashboard</span>
+                  </span>
                 </button>
                 <button
-                  className={`actionButton w-full text-left ${activeSection === 'profile' ? 'actionButtonPrimary' : ''}`}
+                  className={`sidebarNavItem ${activeSection === 'profile' ? 'sidebarNavItemActive' : ''}`}
                   onClick={() => setActiveSection('profile')}
                 >
-                  Mi perfil
+                  <span className="sidebarNavItemContent">
+                    <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <circle cx="12" cy="8" r="4" />
+                      <path d="M4 20c1.8-3.2 5-5 8-5s6.2 1.8 8 5" strokeLinecap="round" />
+                    </svg>
+                    <span>Mi perfil</span>
+                  </span>
                 </button>
                 <button
-                  className={`actionButton w-full text-left ${activeSection === 'students' ? 'actionButtonPrimary' : ''}`}
+                  className={`sidebarNavItem ${activeSection === 'students' ? 'sidebarNavItemActive' : ''}`}
                   onClick={() => setActiveSection('students')}
                 >
-                  Estudiantes
+                  <span className="sidebarNavItemContent">
+                    <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="m2 10 10-5 10 5-10 5-10-5Z" />
+                      <path d="M6 12v4c0 1.8 2.7 3 6 3s6-1.2 6-3v-4" />
+                    </svg>
+                    <span>Estudiantes</span>
+                  </span>
                 </button>
                 {selectedStudent && (
                   <button
-                    className={`actionButton w-full text-left ${activeSection === 'studentPlans' ? 'actionButtonPrimary' : ''}`}
+                    className={`sidebarNavItem ${activeSection === 'studentPlans' ? 'sidebarNavItemActive' : ''}`}
                     onClick={() => setActiveSection('studentPlans')}
                   >
-                    Planes de tratamiento del estudiante
+                    <span className="sidebarNavItemContent">
+                      <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+                      </svg>
+                      <span>Planes de tratamiento del estudiante</span>
+                    </span>
                   </button>
                 )}
                 {selectedPlan && (
                   <button
-                    className={`actionButton w-full text-left ${activeSection === 'sessions' ? 'actionButtonPrimary' : ''}`}
+                    className={`sidebarNavItem ${activeSection === 'sessions' ? 'sidebarNavItemActive' : ''}`}
                     onClick={() => setActiveSection('sessions')}
                   >
-                    Sesiones
+                    <span className="sidebarNavItemContent">
+                      <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <rect x="3" y="5" width="18" height="16" rx="2" />
+                        <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+                      </svg>
+                      <span>Sesiones</span>
+                    </span>
                   </button>
                 )}
                 {selectedSession && (
                   <button
-                    className={`actionButton w-full text-left ${activeSection === 'sessionDetail' ? 'actionButtonPrimary' : ''}`}
+                    className={`sidebarNavItem ${activeSection === 'sessionDetail' ? 'sidebarNavItemActive' : ''}`}
                     onClick={() => setActiveSection('sessionDetail')}
                   >
-                    Sesión activa
+                    <span className="sidebarNavItemContent">
+                      <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <path d="M14 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                        <path d="M14 4h6v6" />
+                        <path d="M20 4 11 13" strokeLinecap="round" />
+                      </svg>
+                      <span>Sesión activa</span>
+                    </span>
                   </button>
                 )}
                 <button
-                  className={`actionButton w-full text-left ${activeSection === 'tasks' ? 'actionButtonPrimary' : ''}`}
+                  className={`sidebarNavItem ${activeSection === 'tasks' ? 'sidebarNavItemActive' : ''}`}
                   onClick={() => setActiveSection('tasks')}
                 >
-                  Banco de tareas
+                  <span className="sidebarNavItemContent">
+                    <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <rect x="4" y="4" width="16" height="16" rx="2" />
+                      <path d="m8 12 2.5 2.5L16 9" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span>Banco de tareas</span>
+                  </span>
                 </button>
                 <button
-                  className={`actionButton w-full text-left ${activeSection === 'mediaLibrary' ? 'actionButtonPrimary' : ''}`}
+                  className={`sidebarNavItem ${activeSection === 'mediaLibrary' ? 'sidebarNavItemActive' : ''}`}
                   onClick={() => setActiveSection('mediaLibrary')}
                 >
-                  Biblioteca de medios
+                  <span className="sidebarNavItemContent">
+                    <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <rect x="3" y="5" width="18" height="14" rx="2" />
+                      <circle cx="9" cy="10" r="1.5" />
+                      <path d="m6 17 4-4 3 3 3-2 2 3" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span>Biblioteca de medios</span>
+                  </span>
                 </button>
               </div>
             </aside>
 
-            <main className="space-y-4 bg-slate-100 p-4 md:p-6">
+            <main className="space-y-4 bg-[#f3f4f6] p-4 md:p-6">
               {selectedStudent && ['studentPlans'].includes(activeSection) && (
                 <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="text-base font-semibold text-slate-900">Contexto activo</h2>
@@ -1823,26 +1963,61 @@ function App() {
 
               {activeSection === 'overview' && (
                 <>
-                  <section className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Estudiantes</p>
-                      <p className="mt-1 text-xl font-bold text-slate-900">{students.length}</p>
-                      <p className="mt-1 text-xs text-slate-500">Total registrados</p>
+                  <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <article className="rounded-[10px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ecebff] text-[#6e62e5]" aria-hidden="true">
+                          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="m2 10 10-5 10 5-10 5-10-5Z" />
+                            <path d="M6 12v4c0 1.8 2.7 3 6 3s6-1.2 6-3v-4" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500">{overviewStats.students} registrados</p>
+                          <p className="text-sm font-semibold text-slate-900">Estudiantes</p>
+                        </div>
+                      </div>
                     </article>
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Planes de tratamiento</p>
-                      <p className="mt-1 text-xl font-bold text-slate-900">{plans.length}</p>
-                      <p className="mt-1 text-xs text-slate-500">Año actual: {currentYear}</p>
+                    <article className="rounded-[10px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f8e9fc] text-[#c026d3]" aria-hidden="true">
+                          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500">{overviewStats.plans} activos - {currentYear}</p>
+                          <p className="text-sm font-semibold text-slate-900">Planes de tratamiento</p>
+                        </div>
+                      </div>
                     </article>
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sesiones finalizadas</p>
-                      <p className="mt-1 text-xl font-bold text-emerald-600">{finalizedSessionsCount}</p>
-                      <p className="mt-1 text-xs text-slate-500">Dentro del plan de tratamiento seleccionado</p>
+                    <article className="rounded-[10px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#eaf7fb] text-cyan-700" aria-hidden="true">
+                          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="4" y="4" width="16" height="16" rx="2" />
+                            <path d="m8 12 2.5 2.5L16 9" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500">{overviewStats.finalizedSessions} completadas</p>
+                          <p className="text-sm font-semibold text-slate-900">Sesiones finalizadas</p>
+                        </div>
+                      </div>
                     </article>
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-3 shadow-sm">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sesiones pendientes</p>
-                      <p className="mt-1 text-xl font-bold text-amber-600">{pendingSessionsCount}</p>
-                      <p className="mt-1 text-xs text-slate-500">Requieren gestion</p>
+                    <article className="rounded-[10px] border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ecebff] text-violet-700" aria-hidden="true">
+                          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="3" y="5" width="18" height="16" rx="2" />
+                            <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500">{overviewStats.pendingSessions} por gestionar</p>
+                          <p className="text-sm font-semibold text-slate-900">Sesiones pendientes</p>
+                        </div>
+                      </div>
                     </article>
                   </section>
 
@@ -1866,7 +2041,7 @@ function App() {
                       <h2 className="text-base font-semibold text-slate-900">Sesiones para hoy</h2>
                       <span className="text-xs text-slate-500">{formatDisplayDate(new Date().toISOString().slice(0, 10))}</span>
                     </div>
-                    {todaySessions.length === 0 ? (
+                    {sortedTodaySessions.length === 0 ? (
                       <p className="text-sm text-slate-500">No hay sesiones agendadas para hoy.</p>
                     ) : (
                       <div className="overflow-x-auto rounded-[5px] border border-slate-200">
@@ -1874,6 +2049,8 @@ function App() {
                           <thead className="bg-slate-50">
                             <tr>
                               <th className="px-3 py-2 text-left font-semibold text-slate-600">Estudiante</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Hora</th>
+                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Curso</th>
                               <th className="px-3 py-2 text-left font-semibold text-slate-600">Plan</th>
                               <th className="px-3 py-2 text-left font-semibold text-slate-600">Objetivo</th>
                               <th className="px-3 py-2 text-left font-semibold text-slate-600">Estado</th>
@@ -1881,9 +2058,11 @@ function App() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 bg-white">
-                            {todaySessions.map((item) => (
+                            {sortedTodaySessions.map((item) => (
                               <tr key={`${item.student.id}-${item.plan.id}-${item.session.id}`} className="hover:bg-slate-50">
                                 <td className="px-3 py-2 text-slate-700">{item.student.full_name}</td>
+                                <td className="px-3 py-2 text-slate-700">{formatDisplayTime(item.session.session_time)}</td>
+                                <td className="px-3 py-2 text-slate-700">{item.student.course?.display_name || 'Sin curso'}</td>
                                 <td className="px-3 py-2 text-slate-700">{item.plan.year}</td>
                                 <td className="px-3 py-2 text-slate-700">{item.session.objective}</td>
                                 <td className="px-3 py-2">
@@ -1898,12 +2077,46 @@ function App() {
                                   </span>
                                 </td>
                                 <td className="px-3 py-2 text-right">
+                                  {(() => {
+                                    const sessionStatus = displaySessionStatus(item.session.status)
+                                    const actionLabel = sessionStatus === 'pendiente'
+                                      ? 'Realizar sesión'
+                                      : sessionStatus === 'finalizada'
+                                        ? 'Ver resultados'
+                                        : 'Ver sesión'
+                                    const icon = sessionStatus === 'pendiente'
+                                      ? (
+                                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                          <rect x="3" y="5" width="18" height="16" rx="2" />
+                                          <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+                                          <path d="m10 14 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                                        </svg>
+                                      )
+                                      : sessionStatus === 'finalizada'
+                                        ? (
+                                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                            <path d="M4 19h16" strokeLinecap="round" />
+                                            <path d="M7 15l3-3 3 2 4-5" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                        )
+                                        : (
+                                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                            <path d="M2.2 12c1.2-4 4.9-7 9.8-7s8.6 3 9.8 7c-1.2 4-4.9 7-9.8 7s-8.6-3-9.8-7Z" />
+                                            <circle cx="12" cy="12" r="3" />
+                                          </svg>
+                                        )
+                                    return (
                                   <button
-                                    className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+                                    className="rounded-[5px] border border-slate-300 bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200"
                                     onClick={() => onOpenTodaySession(item)}
                                   >
-                                    👁️ Ver sesión
+                                    <span className="inline-flex items-center gap-1.5">
+                                      {icon}
+                                      <span>{actionLabel}</span>
+                                    </span>
                                   </button>
+                                    )
+                                  })()}
                                 </td>
                               </tr>
                             ))}
@@ -2166,22 +2379,40 @@ function App() {
                             <td className="px-3 py-3">
                               <div className="flex flex-wrap justify-end gap-2">
                                 <button
-                                  className="rounded-[5px] border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                                  className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
                                   onClick={() => onEditStudent(student)}
                                 >
-                                  ✏️ Editar
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M12 20h9" strokeLinecap="round" />
+                                      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Editar</span>
+                                  </span>
                                 </button>
                                 <button
                                   className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
                                   onClick={() => onSelectStudent(student)}
                                 >
-                                  📋 Planes de tratamiento
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <rect x="4" y="4" width="16" height="16" rx="2" />
+                                      <path d="M8 8h8M8 12h8M8 16h5" strokeLinecap="round" />
+                                    </svg>
+                                    <span>Planes de tratamiento</span>
+                                  </span>
                                 </button>
                                 <button
                                   className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
                                   onClick={() => onDeleteStudent(student.id)}
                                 >
-                                  🗑️ Eliminar
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M3 6h18" strokeLinecap="round" />
+                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Eliminar</span>
+                                  </span>
                                 </button>
                               </div>
                             </td>
@@ -2250,22 +2481,40 @@ function App() {
                           <td className="px-3 py-3">
                             <div className="flex flex-wrap justify-end gap-2">
                               <button
-                                className="rounded-[5px] border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                                className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
                                 onClick={() => onSelectPlan(plan)}
                               >
-                                📘 Sesiones
+                                <span className="inline-flex items-center gap-1.5">
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                    <rect x="3" y="5" width="18" height="16" rx="2" />
+                                    <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+                                  </svg>
+                                  <span>Sesiones</span>
+                                </span>
                               </button>
                               <button
-                                className="rounded-[5px] border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+                                className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
                                 onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}
                               >
-                                📄 PDF
+                                <span className="inline-flex items-center gap-1.5">
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+                                    <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
+                                  </svg>
+                                  <span>PDF</span>
+                                </span>
                               </button>
                               <button
                                 className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
                                 onClick={() => onDeletePlan(plan.id)}
                               >
-                                🗑️ Eliminar
+                                <span className="inline-flex items-center gap-1.5">
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                    <path d="M3 6h18" strokeLinecap="round" />
+                                    <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
+                                  </svg>
+                                  <span>Eliminar</span>
+                                </span>
                               </button>
                             </div>
                           </td>
@@ -2336,7 +2585,7 @@ function App() {
                               </div>
                               <div className="space-y-1 text-xs text-slate-700">
                                 <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-red-500" />Ausente: <strong>{suspensionByAbsent}</strong></p>
-                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-violet-500" />Actividad: <strong>{suspensionBySchool}</strong></p>
+                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-fuchsia-500" />Actividad: <strong>{suspensionBySchool}</strong></p>
                                 <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Sin motivo: <strong>{unknownSuspensionReason}</strong></p>
                               </div>
                             </div>
@@ -2367,7 +2616,7 @@ function App() {
                               <polyline
                                 className="session-chart-line"
                                 fill="none"
-                                stroke="#2563eb"
+                                stroke="#a21caf"
                                 strokeWidth="2.5"
                                 points={polylinePoints}
                               />
@@ -2378,7 +2627,7 @@ function App() {
                                     cx={point.x}
                                     cy={point.y}
                                     r="5.5"
-                                    fill="#2563eb"
+                                    fill="#a21caf"
                                     stroke="#ffffff"
                                     strokeWidth="2"
                                   >
@@ -2447,20 +2696,38 @@ function App() {
                                 className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
                                 onClick={() => onSelectSession(session)}
                               >
-                                👁️ Ver sesión
+                                <span className="inline-flex items-center gap-1.5">
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                    <path d="M2.2 12c1.2-4 4.9-7 9.8-7s8.6 3 9.8 7c-1.2 4-4.9 7-9.8 7s-8.6-3-9.8-7Z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                  </svg>
+                                  <span>Ver sesión</span>
+                                </span>
                               </button>
                               <button
-                                className="rounded-[5px] border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+                                className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
                                 onClick={() => onEditSession(session)}
                               >
-                                ✏️ Editar
+                                <span className="inline-flex items-center gap-1.5">
+                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                    <path d="M12 20h9" strokeLinecap="round" />
+                                    <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
+                                  </svg>
+                                  <span>Editar</span>
+                                </span>
                               </button>
                               {displaySessionStatus(session.status) === 'finalizada' && (
                                 <button
-                                  className="rounded-[5px] border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+                                  className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
                                   onClick={() => onDownloadSessionPdf(session.id)}
                                 >
-                                  📄 PDF
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+                                      <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
+                                    </svg>
+                                    <span>PDF</span>
+                                  </span>
                                 </button>
                               )}
                               {displaySessionStatus(session.status) === 'pendiente' && (
@@ -2468,7 +2735,13 @@ function App() {
                                   className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
                                   onClick={() => onDeleteSession(session.id)}
                                 >
-                                  🗑️ Eliminar
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M3 6h18" strokeLinecap="round" />
+                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Eliminar</span>
+                                  </span>
                                 </button>
                               )}
                             </div>
@@ -2609,7 +2882,13 @@ function App() {
                                   className="cursor-pointer rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
                                   onClick={() => onDeleteSessionTask(task.id)}
                                 >
-                                  🗑️ Eliminar
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M3 6h18" strokeLinecap="round" />
+                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Eliminar</span>
+                                  </span>
                                 </button>
                               </div>
                             </td>
@@ -3007,6 +3286,11 @@ function App() {
                   </div>
                   <form onSubmit={onSaveSession}>
                     <div className="grid gap-3 px-5 py-4">
+                      {sessionModalError && (
+                        <p className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 md:col-span-2">
+                          {sessionModalError}
+                        </p>
+                      )}
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="session-date">Fecha</label>
                         <input
@@ -3015,6 +3299,16 @@ function App() {
                           type="date"
                           value={sessionForm.session_date}
                           onChange={(e) => setSessionForm({ ...sessionForm, session_date: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="session-time">Hora</label>
+                        <input
+                          id="session-time"
+                          className="fieldInput mb-0"
+                          type="time"
+                          value={sessionForm.session_time}
+                          onChange={(e) => setSessionForm({ ...sessionForm, session_time: e.target.value })}
                         />
                       </div>
                       <div className="md:col-span-2">
