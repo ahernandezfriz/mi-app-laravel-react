@@ -3,6 +3,19 @@ import './App.css'
 import AppRouter from './app/router/AppRouter'
 import TaskBankSection from './features/taskTemplates/components/TaskBankSection'
 import FeedbackMessage from './shared/components/FeedbackMessage'
+import StudentContextCard from './shared/components/StudentContextCard'
+import SessionContextCard from './shared/components/SessionContextCard'
+import SessionsDayCalendar from './shared/components/SessionsDayCalendar'
+import DashboardScheduledSessions from './features/dashboard/components/DashboardScheduledSessions'
+import { monthYearFromISODate, toLocalISODate } from './shared/utils/date'
+import {
+  buildSuspensionObservation,
+  getSuspensionReasonDisplayLabel,
+  getSuspensionReasonShortLabel,
+  parseSuspensionReasonValue,
+  sessionHasSuspensionReason,
+  SUSPENSION_REASON_OPTIONS,
+} from './shared/utils/suspensionReason'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
 const PAGE_SIZE = 10
@@ -26,6 +39,12 @@ const ratingToScore = {
   con_dificultad: 1,
   por_lograr: 2,
   logrado: 3,
+}
+
+function normalizeSessionTime(value) {
+  if (!value) return '09:00'
+  const match = String(value).trim().match(/^(\d{2}):(\d{2})/)
+  return match ? `${match[1]}:${match[2]}` : '09:00'
 }
 const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary'])
 
@@ -86,6 +105,8 @@ function App() {
   const [isTaskModalVisible, setIsTaskModalVisible] = useState(false)
   const [showSuspendModal, setShowSuspendModal] = useState(false)
   const [isSuspendModalVisible, setIsSuspendModalVisible] = useState(false)
+  const [suspendModalError, setSuspendModalError] = useState('')
+  const [isSuspendingSession, setIsSuspendingSession] = useState(false)
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [plans, setPlans] = useState([])
   const [planForm, setPlanForm] = useState({ year: new Date().getFullYear() })
@@ -145,7 +166,10 @@ function App() {
   const [taskCreationMode, setTaskCreationMode] = useState('manual')
   const [, setEditingTaskId] = useState(null)
   const [taskHistory, setTaskHistory] = useState([])
-  const [todaySessions, setTodaySessions] = useState([])
+  const [scheduledSessions, setScheduledSessions] = useState([])
+  const [dashboardSelectedDate, setDashboardSelectedDate] = useState(() => toLocalISODate())
+  const [dashboardCalendarMonth, setDashboardCalendarMonth] = useState(() => monthYearFromISODate(toLocalISODate()))
+  const [sessionCountsByDate, setSessionCountsByDate] = useState({})
   const [overviewStats, setOverviewStats] = useState({
     students: 0,
     plans: 0,
@@ -619,22 +643,41 @@ function App() {
   }, [activeSection, api, selectedPlan, selectedStudent, sessions])
 
   useEffect(() => {
-    async function loadTodaySessions() {
+    async function loadScheduledSessions() {
       if (!token) {
-        setTodaySessions([])
+        setScheduledSessions([])
         return
       }
 
       try {
-        const sessionsByDay = await api('/sessions/today')
-        setTodaySessions(sessionsByDay)
+        const sessionsByDay = await api(`/sessions/today?date=${dashboardSelectedDate}`)
+        setScheduledSessions(sessionsByDay)
       } catch {
-        setTodaySessions([])
+        setScheduledSessions([])
       }
     }
 
-    loadTodaySessions()
-  }, [api, token, sessions, plans, students])
+    loadScheduledSessions()
+  }, [api, token, dashboardSelectedDate, sessions, plans, students])
+
+  useEffect(() => {
+    async function loadCalendarCounts() {
+      if (!token || activeSection !== 'overview') {
+        return
+      }
+
+      try {
+        const counts = await api(
+          `/sessions/calendar-counts?year=${dashboardCalendarMonth.year}&month=${dashboardCalendarMonth.month}`,
+        )
+        setSessionCountsByDate(counts)
+      } catch {
+        setSessionCountsByDate({})
+      }
+    }
+
+    loadCalendarCounts()
+  }, [activeSection, api, dashboardCalendarMonth, token, sessions, plans, students])
 
   useEffect(() => {
     async function refreshDashboardData() {
@@ -1194,7 +1237,7 @@ function App() {
       rating: 'por_lograr',
     })
     setSessionObservation(session.general_observation || '')
-    setSuspensionReason('estudiante_ausente')
+    setSuspensionReason(parseSuspensionReasonValue(session.general_observation) || 'estudiante_ausente')
     setSessionMaterialForm({ title: '', media_library_item_id: '', file: null })
     setShowTaskModal(false)
     setTaskCreationMode('manual')
@@ -1411,8 +1454,13 @@ function App() {
     }
   }
 
+  function notifyUser(message, type = 'success') {
+    setStatus(message)
+    setToast({ show: true, type, message })
+  }
+
   async function onUpdateSessionState({ status, generalObservation }, successMessage) {
-    if (!selectedStudent || !selectedPlan || !selectedSession) return
+    if (!selectedStudent || !selectedPlan || !selectedSession) return null
     try {
       const updatedSession = await api(
         `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}`,
@@ -1420,7 +1468,7 @@ function App() {
           method: 'PUT',
           body: JSON.stringify({
             session_date: selectedSession.session_date,
-            session_time: selectedSession.session_time || '09:00',
+            session_time: normalizeSessionTime(selectedSession.session_time),
             objective: selectedSession.objective,
             description: selectedSession.description || null,
             general_observation: generalObservation,
@@ -1430,46 +1478,62 @@ function App() {
       )
       setSelectedSession(updatedSession)
       setSessionObservation(updatedSession.general_observation || '')
-      await onSelectPlan(selectedPlan)
-      await onSelectSession(updatedSession)
+      const refreshedSessions = await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions`,
+      )
+      setSessions(refreshedSessions)
       setActiveSection('sessionDetail')
-      setStatus(successMessage)
+      notifyUser(successMessage, 'success')
+      return updatedSession
     } catch (error) {
-      setStatus(error.message)
+      notifyUser(error.message, 'error')
+      throw error
     }
   }
 
   async function onFinalizeSession() {
     if (!selectedSession) return
-    await onUpdateSessionState(
-      { status: 'finalizada', generalObservation: sessionObservation || null },
-      'Sesion finalizada',
-    )
+    try {
+      await onUpdateSessionState(
+        { status: 'finalizada', generalObservation: sessionObservation || null },
+        'Sesión finalizada correctamente.',
+      )
+    } catch {
+      // El mensaje de error ya se muestra en notifyUser.
+    }
   }
 
   async function onReopenSession() {
     if (!selectedSession) return
-    await onUpdateSessionState(
-      { status: 'pendiente', generalObservation: sessionObservation || null },
-      'Sesion habilitada para edicion',
-    )
+    try {
+      await onUpdateSessionState(
+        { status: 'pendiente', generalObservation: sessionObservation || null },
+        'Sesión habilitada para edición.',
+      )
+    } catch {
+      // El mensaje de error ya se muestra en notifyUser.
+    }
   }
 
   async function onSuspendSession() {
-    if (!selectedSession) return
-    const suspensionLabel =
-      suspensionReason === 'estudiante_ausente' ? 'Estudiante ausente' : 'Actividad escolar/suspension'
-    const generalObservationWithReason = [
-      sessionObservation?.trim() || null,
-      `Motivo de suspension: ${suspensionLabel}`,
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-    await onUpdateSessionState(
-      { status: 'suspendida', generalObservation: generalObservationWithReason },
-      'Sesion suspendida',
+    if (!selectedSession || isSuspendingSession) return
+    setIsSuspendingSession(true)
+    setSuspendModalError('')
+    const { text: generalObservationWithReason, label: suspensionLabel } = buildSuspensionObservation(
+      sessionObservation,
+      suspensionReason,
     )
-    setShowSuspendModal(false)
+    try {
+      await onUpdateSessionState(
+        { status: 'suspendida', generalObservation: generalObservationWithReason },
+        `Sesión suspendida correctamente (${suspensionLabel}).`,
+      )
+      setShowSuspendModal(false)
+    } catch (error) {
+      setSuspendModalError(error.message || 'No se pudo suspender la sesión.')
+    } finally {
+      setIsSuspendingSession(false)
+    }
   }
 
   async function onDeleteSessionTask(taskId) {
@@ -1598,14 +1662,14 @@ function App() {
   const todayDate = new Date().toISOString().slice(0, 10)
   const finalizedSessionsCount = sessions.filter((session) => session.status === 'finalizada').length
   const pendingSessionsCount = sessions.filter((session) => session.status !== 'finalizada').length
-  const sortedTodaySessions = useMemo(
+  const sortedScheduledSessions = useMemo(
     () =>
-      [...todaySessions].sort((a, b) => {
+      [...scheduledSessions].sort((a, b) => {
         const first = a.session.session_time || '23:59'
         const second = b.session.session_time || '23:59'
         return first.localeCompare(second)
       }),
-    [todaySessions],
+    [scheduledSessions],
   )
   const totalSessionsCount = sessions.length
   const suspendedSessions = sessions.filter((session) => session.status === 'suspendida')
@@ -1614,16 +1678,16 @@ function App() {
   const absentSuspensionsUntilToday = sessionsUntilToday.filter(
     (session) =>
       session.status === 'suspendida' &&
-      (session.general_observation || '').toLowerCase().includes('estudiante ausente'),
+      sessionHasSuspensionReason(session.general_observation, 'estudiante_ausente'),
   ).length
   const assistanceBase = finalizedSessionsUntilToday + absentSuspensionsUntilToday
   const attendancePercent = assistanceBase > 0 ? Math.round((finalizedSessionsUntilToday / assistanceBase) * 100) : 0
   const suspensionPercent = assistanceBase > 0 ? 100 - attendancePercent : 0
   const suspensionByAbsent = suspendedSessions.filter((session) =>
-    (session.general_observation || '').toLowerCase().includes('estudiante ausente'),
+    sessionHasSuspensionReason(session.general_observation, 'estudiante_ausente'),
   ).length
   const suspensionBySchool = suspendedSessions.filter((session) =>
-    (session.general_observation || '').toLowerCase().includes('actividad escolar/suspension'),
+    sessionHasSuspensionReason(session.general_observation, 'actividad_escolar_suspension'),
   ).length
   const unknownSuspensionReason = Math.max(suspendedSessions.length - suspensionByAbsent - suspensionBySchool, 0)
   const attendancePieConic = `conic-gradient(#10b981 0% ${attendancePercent}%, #f59e0b ${attendancePercent}% 100%)`
@@ -1637,17 +1701,25 @@ function App() {
     #94a3b8 ${suspendedAbsentPercent + suspendedSchoolPercent}% 100%
   )`
   const displaySessionStatus = (status) => (status === 'draft' ? 'pendiente' : status)
-  const getSuspensionReasonLabel = (generalObservation) => {
-    const normalized = (generalObservation || '').toLowerCase()
-    if (normalized.includes('estudiante ausente')) return 'ausente'
-    if (normalized.includes('actividad escolar/suspension')) return 'actividad escolar'
-    return ''
-  }
   const displaySessionStatusLabel = (session) => {
     const status = displaySessionStatus(session?.status)
     if (status !== 'suspendida') return status
-    const reason = getSuspensionReasonLabel(session?.general_observation)
+    const reason = getSuspensionReasonShortLabel(session?.general_observation)
     return reason ? `suspendida (${reason})` : 'suspendida'
+  }
+  const getSessionEntryActionLabel = (status) => {
+    const normalized = displaySessionStatus(status)
+    return normalized === 'pendiente' ? 'Realizar sesión' : 'Revisar sesión'
+  }
+  const getSessionEntryActionClass = (status) => {
+    const normalized = displaySessionStatus(status)
+    if (normalized === 'pendiente') {
+      return 'rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100'
+    }
+    if (normalized === 'finalizada') {
+      return 'rounded-[5px] border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-xs font-medium text-violet-800 transition hover:bg-violet-100'
+    }
+    return 'rounded-[5px] border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-800 transition hover:bg-rose-100'
   }
   const apiOrigin = apiBaseUrl.replace(/\/api\/?$/, '')
   const getStoragePublicUrl = (storagePath) => {
@@ -1934,33 +2006,6 @@ function App() {
             </aside>
 
             <main className="space-y-4 bg-[#f3f4f6] p-4 md:p-6">
-              {selectedStudent && ['studentPlans'].includes(activeSection) && (
-                <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <h2 className="text-base font-semibold text-slate-900">Contexto activo</h2>
-                  <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-3">
-                    <p><strong>Estudiante:</strong> {selectedStudent.full_name}</p>
-                    <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
-                    <p><strong>RUT:</strong> {selectedStudent.rut}</p>
-                    <p><strong>Apoderado:</strong> {selectedStudent.guardian_name}</p>
-                    {selectedPlan && (
-                      <>
-                        <p><strong>Plan de tratamiento:</strong> {selectedPlan.year}</p>
-                        <p><strong>Diagnóstico del plan de tratamiento:</strong> {selectedPlan.diagnosis_snapshot}</p>
-                      </>
-                    )}
-                    {selectedSession && activeSection === 'sessionDetail' && (
-                      <>
-                        <p><strong>Sesión:</strong> {formatDisplayDate(selectedSession.session_date)}</p>
-                        <p><strong>Objetivo sesión:</strong> {selectedSession.objective}</p>
-                        <p className="xl:col-span-3">
-                          <strong>Descripción sesión:</strong> {selectedSession.description || 'Sin descripción'}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </section>
-              )}
-
               {activeSection === 'overview' && (
                 <>
                   <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -2037,93 +2082,27 @@ function App() {
                   </section>
 
                   <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h2 className="text-base font-semibold text-slate-900">Sesiones para hoy</h2>
-                      <span className="text-xs text-slate-500">{formatDisplayDate(new Date().toISOString().slice(0, 10))}</span>
+                    <h2 className="mb-4 text-base font-semibold text-slate-900">Agenda de sesiones</h2>
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(260px,320px)_1fr]">
+                      <SessionsDayCalendar
+                        selectedDate={dashboardSelectedDate}
+                        onSelectDate={setDashboardSelectedDate}
+                        viewMonth={dashboardCalendarMonth}
+                        onViewMonthChange={setDashboardCalendarMonth}
+                        sessionCountsByDate={sessionCountsByDate}
+                      />
+                      <DashboardScheduledSessions
+                        selectedDate={dashboardSelectedDate}
+                        formatDisplayDate={formatDisplayDate}
+                        formatDisplayTime={formatDisplayTime}
+                        sessions={sortedScheduledSessions}
+                        displaySessionStatus={displaySessionStatus}
+                        displaySessionStatusLabel={displaySessionStatusLabel}
+                        getSessionEntryActionLabel={getSessionEntryActionLabel}
+                        getSessionEntryActionClass={getSessionEntryActionClass}
+                        onOpenSession={onOpenTodaySession}
+                      />
                     </div>
-                    {sortedTodaySessions.length === 0 ? (
-                      <p className="text-sm text-slate-500">No hay sesiones agendadas para hoy.</p>
-                    ) : (
-                      <div className="overflow-x-auto rounded-[5px] border border-slate-200">
-                        <table className="min-w-full divide-y divide-slate-200 text-sm">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Estudiante</th>
-                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Hora</th>
-                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Curso</th>
-                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Plan</th>
-                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Objetivo</th>
-                              <th className="px-3 py-2 text-left font-semibold text-slate-600">Estado</th>
-                              <th className="px-3 py-2 text-right font-semibold text-slate-600">Acción</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 bg-white">
-                            {sortedTodaySessions.map((item) => (
-                              <tr key={`${item.student.id}-${item.plan.id}-${item.session.id}`} className="hover:bg-slate-50">
-                                <td className="px-3 py-2 text-slate-700">{item.student.full_name}</td>
-                                <td className="px-3 py-2 text-slate-700">{formatDisplayTime(item.session.session_time)}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.student.course?.display_name || 'Sin curso'}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.plan.year}</td>
-                                <td className="px-3 py-2 text-slate-700">{item.session.objective}</td>
-                                <td className="px-3 py-2">
-                                  <span className={`rounded-[5px] px-2 py-1 text-xs font-semibold ${
-                                    displaySessionStatus(item.session.status) === 'finalizada'
-                                      ? 'bg-emerald-100 text-emerald-700'
-                                      : displaySessionStatus(item.session.status) === 'suspendida'
-                                        ? 'bg-rose-100 text-rose-700'
-                                        : 'bg-amber-100 text-amber-700'
-                                  }`}>
-                                    {displaySessionStatusLabel(item.session)}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  {(() => {
-                                    const sessionStatus = displaySessionStatus(item.session.status)
-                                    const actionLabel = sessionStatus === 'pendiente'
-                                      ? 'Realizar sesión'
-                                      : sessionStatus === 'finalizada'
-                                        ? 'Ver resultados'
-                                        : 'Ver sesión'
-                                    const icon = sessionStatus === 'pendiente'
-                                      ? (
-                                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                          <rect x="3" y="5" width="18" height="16" rx="2" />
-                                          <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
-                                          <path d="m10 14 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
-                                        </svg>
-                                      )
-                                      : sessionStatus === 'finalizada'
-                                        ? (
-                                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                            <path d="M4 19h16" strokeLinecap="round" />
-                                            <path d="M7 15l3-3 3 2 4-5" strokeLinecap="round" strokeLinejoin="round" />
-                                          </svg>
-                                        )
-                                        : (
-                                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                            <path d="M2.2 12c1.2-4 4.9-7 9.8-7s8.6 3 9.8 7c-1.2 4-4.9 7-9.8 7s-8.6-3-9.8-7Z" />
-                                            <circle cx="12" cy="12" r="3" />
-                                          </svg>
-                                        )
-                                    return (
-                                  <button
-                                    className="rounded-[5px] border border-slate-300 bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-200"
-                                    onClick={() => onOpenTodaySession(item)}
-                                  >
-                                    <span className="inline-flex items-center gap-1.5">
-                                      {icon}
-                                      <span>{actionLabel}</span>
-                                    </span>
-                                  </button>
-                                    )
-                                  })()}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
                   </section>
                 </>
               )}
@@ -2432,104 +2411,114 @@ function App() {
               </>
             )}
             {activeSection === 'studentPlans' && selectedStudent && (
-              <section className="sectionCard">
-                <div className="mb-3 flex items-center justify-between">
-                  <h2 className="sectionTitle mb-0">Planes de tratamiento del estudiante</h2>
-                  <div className="flex items-center gap-2">
-                    <button className="actionButton actionButtonPrimary" onClick={() => setShowPlanModal(true)}>
-                      Crear plan de tratamiento
-                    </button>
-                    <button className="actionButton" onClick={() => setActiveSection('students')}>
-                      Volver a estudiantes
-                    </button>
-                  </div>
-                </div>
+              <section className="space-y-4">
+                <StudentContextCard student={selectedStudent} planCount={plans.length} />
 
-                <section className="rounded-[5px] border border-slate-200 bg-slate-50 p-4">
-                  <h3 className="text-lg font-semibold text-slate-900">Información del estudiante</h3>
-                  <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-700 md:grid-cols-2 xl:grid-cols-3">
-                    <p><strong>Nombre:</strong> {selectedStudent.full_name}</p>
-                    <p><strong>RUT:</strong> {selectedStudent.rut}</p>
-                    <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
-                    <p><strong>Diagnóstico actual:</strong> {selectedStudent.current_diagnosis}</p>
-                    <p><strong>Apoderado:</strong> {selectedStudent.guardian_name}</p>
-                    <p><strong>Correo apoderado:</strong> {selectedStudent.guardian_email}</p>
+                <section className="sectionCard">
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="sectionTitle mb-0">Planes de tratamiento</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Cada plan corresponde a un año escolar con su diagnóstico registrado al momento de creación.
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <button className="actionButton actionButtonPrimary" onClick={() => setShowPlanModal(true)}>
+                        Crear plan
+                      </button>
+                      <button className="actionButton" onClick={() => setActiveSection('students')}>
+                        Volver a estudiantes
+                      </button>
+                    </div>
                   </div>
-                </section>
 
-                <div className="overflow-x-auto rounded-[5px] border border-slate-200">
-                  <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Año</th>
-                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Diagnóstico snapshot</th>
-                        <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {plans.length === 0 && (
+                  <div className="overflow-x-auto rounded-[10px] border border-slate-200">
+                    <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+                      <thead className="bg-slate-50">
                         <tr>
-                          <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
-                            No hay planes de tratamiento registrados para este estudiante.
-                          </td>
+                          <th className="w-28 px-4 py-3 text-left font-semibold text-slate-600">Año</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Diagnóstico del plan</th>
+                          <th className="w-64 px-4 py-3 text-right font-semibold text-slate-600">Acciones</th>
                         </tr>
-                      )}
-                      {paginatedPlans.map((plan) => (
-                        <tr key={plan.id} className="hover:bg-slate-50">
-                          <td className="px-3 py-3 font-medium text-slate-900">{plan.year}</td>
-                          <td className="px-3 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
-                          <td className="px-3 py-3">
-                            <div className="flex flex-wrap justify-end gap-2">
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {plans.length === 0 && (
+                          <tr>
+                            <td colSpan={3} className="px-4 py-10 text-center">
+                              <p className="font-medium text-slate-700">Sin planes de tratamiento</p>
+                              <p className="mt-1 text-sm text-slate-500">
+                                Crea el primer plan para comenzar a registrar sesiones.
+                              </p>
                               <button
-                                className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
-                                onClick={() => onSelectPlan(plan)}
+                                type="button"
+                                className="actionButton actionButtonPrimary mt-4"
+                                onClick={() => setShowPlanModal(true)}
                               >
-                                <span className="inline-flex items-center gap-1.5">
-                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                    <rect x="3" y="5" width="18" height="16" rx="2" />
-                                    <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
-                                  </svg>
-                                  <span>Sesiones</span>
-                                </span>
+                                Crear plan de tratamiento
                               </button>
-                              <button
-                                className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
-                                onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}
-                              >
-                                <span className="inline-flex items-center gap-1.5">
-                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
-                                    <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
-                                  </svg>
-                                  <span>PDF</span>
-                                </span>
-                              </button>
-                              <button
-                                className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
-                                onClick={() => onDeletePlan(plan.id)}
-                              >
-                                <span className="inline-flex items-center gap-1.5">
-                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                    <path d="M3 6h18" strokeLinecap="round" />
-                                    <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
-                                  </svg>
-                                  <span>Eliminar</span>
-                                </span>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {plans.length > PAGE_SIZE && renderPagination(
-                  safePlansPage,
-                  plansTotalPages,
-                  () => setPlansPage((prev) => Math.max(1, prev - 1)),
-                  () => setPlansPage((prev) => Math.min(plansTotalPages, prev + 1)),
-                )}
-
+                            </td>
+                          </tr>
+                        )}
+                        {paginatedPlans.map((plan) => (
+                          <tr key={plan.id} className="transition hover:bg-violet-50/40">
+                            <td className="px-4 py-3">
+                              <span className="inline-flex min-w-[3rem] items-center justify-center rounded-full bg-violet-100 px-3 py-1 text-sm font-semibold text-violet-900">
+                                {plan.year}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <button
+                                  className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
+                                  onClick={() => onSelectPlan(plan)}
+                                >
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <rect x="3" y="5" width="18" height="16" rx="2" />
+                                      <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+                                    </svg>
+                                    <span>Sesiones</span>
+                                  </span>
+                                </button>
+                                <button
+                                  className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
+                                  onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}
+                                >
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+                                      <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
+                                    </svg>
+                                    <span>PDF</span>
+                                  </span>
+                                </button>
+                                <button
+                                  className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                  onClick={() => onDeletePlan(plan.id)}
+                                >
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M3 6h18" strokeLinecap="round" />
+                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Eliminar</span>
+                                  </span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {plans.length > PAGE_SIZE && renderPagination(
+                    safePlansPage,
+                    plansTotalPages,
+                    () => setPlansPage((prev) => Math.max(1, prev - 1)),
+                    () => setPlansPage((prev) => Math.min(plansTotalPages, prev + 1)),
+                  )}
+                </section>
               </section>
             )}
             {activeSection === 'sessions' && selectedStudent && selectedPlan && (
@@ -2538,7 +2527,7 @@ function App() {
                   <h2 className="sectionTitle mb-0">Sesiones del plan de tratamiento {selectedPlan.year}</h2>
                   <div className="flex items-center gap-2">
                     <button className="actionButton actionButtonPrimary" onClick={onOpenCreateSessionModal}>
-                      Crear sesión
+                      Agendar sesión
                     </button>
                     <button className="actionButton" onClick={() => setActiveSection('studentPlans')}>
                       Volver a planes de tratamiento
@@ -2693,29 +2682,41 @@ function App() {
                           <td className="px-3 py-3">
                             <div className="flex flex-wrap justify-end gap-2">
                               <button
-                                className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+                                type="button"
+                                className={getSessionEntryActionClass(session.status)}
                                 onClick={() => onSelectSession(session)}
                               >
                                 <span className="inline-flex items-center gap-1.5">
-                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                    <path d="M2.2 12c1.2-4 4.9-7 9.8-7s8.6 3 9.8 7c-1.2 4-4.9 7-9.8 7s-8.6-3-9.8-7Z" />
-                                    <circle cx="12" cy="12" r="3" />
-                                  </svg>
-                                  <span>Ver sesión</span>
+                                  {displaySessionStatus(session.status) === 'pendiente' ? (
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <rect x="3" y="5" width="18" height="16" rx="2" />
+                                      <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+                                      <path d="m10 14 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M2.2 12c1.2-4 4.9-7 9.8-7s8.6 3 9.8 7c-1.2 4-4.9 7-9.8 7s-8.6-3-9.8-7Z" />
+                                      <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                  )}
+                                  <span>{getSessionEntryActionLabel(session.status)}</span>
                                 </span>
                               </button>
-                              <button
-                                className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
-                                onClick={() => onEditSession(session)}
-                              >
-                                <span className="inline-flex items-center gap-1.5">
-                                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                    <path d="M12 20h9" strokeLinecap="round" />
-                                    <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
-                                  </svg>
-                                  <span>Editar</span>
-                                </span>
-                              </button>
+                              {displaySessionStatus(session.status) === 'pendiente' && (
+                                <button
+                                  type="button"
+                                  className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
+                                  onClick={() => onEditSession(session)}
+                                >
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M12 20h9" strokeLinecap="round" />
+                                      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Editar datos</span>
+                                  </span>
+                                </button>
+                              )}
                               {displaySessionStatus(session.status) === 'finalizada' && (
                                 <button
                                   className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
@@ -2761,50 +2762,35 @@ function App() {
               </section>
             )}
             {activeSection === 'sessionDetail' && selectedStudent && selectedPlan && selectedSession && (
-              <section className="sectionCard">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="sectionTitle mb-0">Sesión del {formatDisplayDate(selectedSession.session_date)}</h2>
-                    {selectedSession.status === 'finalizada' && (
-                      <span className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700">
-                        Sesión finalizada
-                      </span>
-                    )}
+              <section className="space-y-4">
+                <SessionContextCard
+                  session={selectedSession}
+                  studentName={selectedStudent.full_name}
+                  planYear={selectedPlan.year}
+                  formattedDate={formatDisplayDate(selectedSession.session_date)}
+                  formattedTime={formatDisplayTime(selectedSession.session_time)}
+                  statusLabel={displaySessionStatusLabel(selectedSession)}
+                  statusKey={displaySessionStatus(selectedSession.status)}
+                  suspensionReasonLabel={getSuspensionReasonDisplayLabel(selectedSession.general_observation)}
+                />
+
+                <section className="sectionCard">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="sectionTitle mb-0">Tareas de la sesión</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Registra, importa y califica las tareas de esta sesión.
+                    </p>
                   </div>
-                  <button className="actionButton cursor-pointer" onClick={() => setActiveSection('sessions')}>
+                  <button type="button" className="actionButton cursor-pointer" onClick={() => setActiveSection('sessions')}>
                     Volver a sesiones
                   </button>
                 </div>
 
-                <section className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <h4 className="text-base font-semibold text-slate-900">Información general</h4>
-                  <div className="mt-3 grid grid-cols-1 gap-4 text-sm text-slate-700 lg:grid-cols-2">
-                    <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Sesión</p>
-                      <div className="space-y-2">
-                        <p><strong>Fecha:</strong> {formatDisplayDate(selectedSession.session_date)}</p>
-                        <p><strong>Estado:</strong> {selectedSession.status}</p>
-                        <p><strong>Objetivo:</strong> {selectedSession.objective}</p>
-                        <p><strong>Descripción:</strong> {selectedSession.description || 'Sin descripción'}</p>
-                      </div>
-                    </div>
-                    <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Estudiante</p>
-                      <div className="space-y-2">
-                        <p><strong>Nombre:</strong> {selectedStudent.full_name}</p>
-                        <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
-                        <p><strong>RUT:</strong> {selectedStudent.rut}</p>
-                        <p><strong>Plan de tratamiento:</strong> {selectedPlan.year}</p>
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <section className={`mt-4 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
+                <section className={`rounded-[5px] border border-slate-200 p-4 shadow-sm ${
                   selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
                 }`}>
-                  <h4 className="text-base font-semibold text-slate-900">Crear tarea para la sesión</h4>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className="text-xs text-slate-500">
                     Primero crea o importa la tarea. La calificación se aplica cuando el profesional la ejecuta con el estudiante.
                   </p>
                   {selectedSession.status === 'finalizada' && (
@@ -3017,8 +3003,15 @@ function App() {
                       Finalizar sesión
                     </button>
                   )}
-                  {selectedSession.status !== 'finalizada' && (
-                    <button type="button" className="actionButton cursor-pointer" onClick={() => setShowSuspendModal(true)}>
+                  {selectedSession.status !== 'finalizada' && selectedSession.status !== 'suspendida' && (
+                    <button
+                      type="button"
+                      className="actionButton cursor-pointer"
+                      onClick={() => {
+                        setSuspendModalError('')
+                        setShowSuspendModal(true)
+                      }}
+                    >
                       Suspender sesión
                     </button>
                   )}
@@ -3031,6 +3024,7 @@ function App() {
                       Generar PDF
                     </button>
                   )}
+                </section>
                 </section>
               </section>
             )}
@@ -3175,6 +3169,11 @@ function App() {
                   </div>
 
                   <div className="space-y-3 px-5 py-4">
+                    {suspendModalError && (
+                      <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                        {suspendModalError}
+                      </p>
+                    )}
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Motivo
                     </label>
@@ -3182,18 +3181,30 @@ function App() {
                       className="fieldInput mb-0"
                       value={suspensionReason}
                       onChange={(e) => setSuspensionReason(e.target.value)}
+                      disabled={isSuspendingSession}
                     >
-                      <option value="estudiante_ausente">Estudiante ausente</option>
-                      <option value="actividad_escolar_suspension">Actividad escolar/suspensión</option>
+                      {SUSPENSION_REASON_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </div>
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-                    <button type="button" className="actionButton" onClick={() => setShowSuspendModal(false)}>
+                    <button
+                      type="button"
+                      className="actionButton"
+                      onClick={() => setShowSuspendModal(false)}
+                      disabled={isSuspendingSession}
+                    >
                       Cancelar
                     </button>
-                    <button type="button" className="actionButton actionButtonPrimary" onClick={onSuspendSession}>
-                      Confirmar suspensión
+                    <button
+                      type="button"
+                      className="actionButton actionButtonPrimary"
+                      onClick={onSuspendSession}
+                      disabled={isSuspendingSession}
+                    >
+                      {isSuspendingSession ? 'Guardando...' : 'Confirmar suspensión'}
                     </button>
                   </div>
                 </div>
@@ -3272,7 +3283,7 @@ function App() {
                 >
                   <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-slate-900">{editingSessionId ? 'Editar sesión' : 'Crear sesión'}</h2>
+                      <h2 className="text-lg font-semibold text-slate-900">{editingSessionId ? 'Editar sesión' : 'Agendar sesión'}</h2>
                       <p className="mt-1 text-sm text-slate-500">Completa los datos principales de la sesión.</p>
                     </div>
                     <button
@@ -3337,7 +3348,7 @@ function App() {
                         Cancelar
                       </button>
                       <button className="actionButton actionButtonPrimary">
-                        {editingSessionId ? 'Actualizar sesión' : 'Crear sesión'}
+                        {editingSessionId ? 'Actualizar sesión' : 'Agendar sesión'}
                       </button>
                     </div>
                   </form>

@@ -46,6 +46,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::delete('/students/{student}/treatment-plans/{treatmentPlan}', [TreatmentPlanController::class, 'destroy']);
     Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions', [TherapySessionController::class, 'index']);
     Route::get('/sessions/today', [TherapySessionController::class, 'today']);
+    Route::get('/sessions/calendar-counts', [TherapySessionController::class, 'calendarCounts']);
     Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions', [TherapySessionController::class, 'store']);
     Route::put('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}', [TherapySessionController::class, 'update']);
     Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}', [TherapySessionController::class, 'destroy']);

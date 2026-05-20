@@ -14,17 +14,65 @@ class TherapySessionController extends Controller
 {
     public function today(Request $request): JsonResponse
     {
-        $today = now()->toDateString();
+        $validated = $request->validate([
+            'date' => ['sometimes', 'date'],
+        ]);
 
-        $query = TherapySession::query()
+        $targetDate = $validated['date'] ?? now()->toDateString();
+
+        $sessions = $this->scheduledSessionsForDate($request, $targetDate);
+
+        return response()->json($sessions->values());
+    }
+
+    public function calendarCounts(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'year' => ['required', 'integer', 'min:2000', 'max:2100'],
+            'month' => ['required', 'integer', 'min:1', 'max:12'],
+        ]);
+
+        $year = (int) $validated['year'];
+        $month = (int) $validated['month'];
+        $start = sprintf('%04d-%02d-01', $year, $month);
+        $end = date('Y-m-t', strtotime($start));
+
+        $rows = $this->scopedSessionsQuery($request)
+            ->whereBetween('session_date', [$start, $end])
+            ->selectRaw('session_date, COUNT(*) as total')
+            ->groupBy('session_date')
+            ->orderBy('session_date')
+            ->get();
+
+        $counts = [];
+        foreach ($rows as $row) {
+            $dateKey = $row->session_date instanceof \DateTimeInterface
+                ? $row->session_date->format('Y-m-d')
+                : (string) $row->session_date;
+            $counts[$dateKey] = (int) $row->total;
+        }
+
+        return response()->json($counts);
+    }
+
+    private function scheduledSessionsForDate(Request $request, string $date)
+    {
+        return $this->scopedSessionsQuery($request)
             ->with([
                 'treatmentPlan:id,student_id,year,diagnosis_snapshot',
                 'treatmentPlan.student:id,full_name,rut,current_diagnosis,school_course_id,guardian_name,guardian_phone,guardian_email',
                 'treatmentPlan.student.course:id,display_name',
             ])
-            ->whereDate('session_date', $today)
+            ->whereDate('session_date', $date)
             ->orderBy('session_time')
-            ->orderBy('id');
+            ->orderBy('id')
+            ->get()
+            ->map(fn (TherapySession $session): array => $this->mapScheduledSessionItem($session));
+    }
+
+    private function scopedSessionsQuery(Request $request): Builder
+    {
+        $query = TherapySession::query();
 
         if ($request->user()->role === 'profesional') {
             $query->whereHas('treatmentPlan.student.professionals', function (Builder $builder) use ($request): void {
@@ -32,37 +80,38 @@ class TherapySessionController extends Controller
             });
         }
 
-        $sessions = $query->get()->map(function (TherapySession $session): array {
-            return [
-                'session' => [
-                    'id' => $session->id,
-                    'session_date' => $session->session_date,
-                    'session_time' => $session->session_time,
-                    'objective' => $session->objective,
-                    'status' => $session->status,
-                    'general_observation' => $session->general_observation,
-                ],
-                'plan' => [
-                    'id' => $session->treatmentPlan->id,
-                    'year' => $session->treatmentPlan->year,
-                    'diagnosis_snapshot' => $session->treatmentPlan->diagnosis_snapshot,
-                ],
-                'student' => [
-                    'id' => $session->treatmentPlan->student->id,
-                    'full_name' => $session->treatmentPlan->student->full_name,
-                    'rut' => $session->treatmentPlan->student->rut,
-                    'current_diagnosis' => $session->treatmentPlan->student->current_diagnosis,
-                    'guardian_name' => $session->treatmentPlan->student->guardian_name,
-                    'guardian_phone' => $session->treatmentPlan->student->guardian_phone,
-                    'guardian_email' => $session->treatmentPlan->student->guardian_email,
-                    'course' => $session->treatmentPlan->student->course
-                        ? ['display_name' => $session->treatmentPlan->student->course->display_name]
-                        : null,
-                ],
-            ];
-        });
+        return $query;
+    }
 
-        return response()->json($sessions->values());
+    private function mapScheduledSessionItem(TherapySession $session): array
+    {
+        return [
+            'session' => [
+                'id' => $session->id,
+                'session_date' => $session->session_date,
+                'session_time' => $session->session_time,
+                'objective' => $session->objective,
+                'status' => $session->status,
+                'general_observation' => $session->general_observation,
+            ],
+            'plan' => [
+                'id' => $session->treatmentPlan->id,
+                'year' => $session->treatmentPlan->year,
+                'diagnosis_snapshot' => $session->treatmentPlan->diagnosis_snapshot,
+            ],
+            'student' => [
+                'id' => $session->treatmentPlan->student->id,
+                'full_name' => $session->treatmentPlan->student->full_name,
+                'rut' => $session->treatmentPlan->student->rut,
+                'current_diagnosis' => $session->treatmentPlan->student->current_diagnosis,
+                'guardian_name' => $session->treatmentPlan->student->guardian_name,
+                'guardian_phone' => $session->treatmentPlan->student->guardian_phone,
+                'guardian_email' => $session->treatmentPlan->student->guardian_email,
+                'course' => $session->treatmentPlan->student->course
+                    ? ['display_name' => $session->treatmentPlan->student->course->display_name]
+                    : null,
+            ],
+        ];
     }
 
     public function index(Request $request, Student $student, TreatmentPlan $treatmentPlan): JsonResponse
@@ -114,6 +163,12 @@ class TherapySessionController extends Controller
         $this->ensurePlanBelongsToStudent($student, $treatmentPlan);
         $this->ensureSessionBelongsToPlan($treatmentPlan, $session);
 
+        if ($request->filled('session_time')) {
+            $request->merge([
+                'session_time' => substr((string) $request->input('session_time'), 0, 5),
+            ]);
+        }
+
         $validated = $request->validate([
             'session_date' => ['required', 'date'],
             'session_time' => ['required', 'date_format:H:i'],
@@ -136,7 +191,7 @@ class TherapySessionController extends Controller
 
         $session->update($validated);
 
-        return response()->json($session);
+        return response()->json($session->fresh());
     }
 
     public function destroy(Request $request, Student $student, TreatmentPlan $treatmentPlan, TherapySession $session): JsonResponse
