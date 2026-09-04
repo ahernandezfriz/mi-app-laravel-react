@@ -1,0 +1,43 @@
+<?php
+/**
+ * Ejecutar UNA vez tras subir el backend en cPanel (sin terminal).
+ * Borrar este archivo desde el Administrador de archivos al terminar.
+ */
+$expectedToken = '__DEPLOY_TOKEN__';
+
+if (($_GET['token'] ?? '') !== $expectedToken) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Acceso denegado.');
+}
+
+header('Content-Type: text/plain; charset=utf-8');
+
+define('LARAVEL_START', microtime(true));
+
+require __DIR__ . '/../vendor/autoload.php';
+
+/** @var \Illuminate\Foundation\Application $app */
+$app = require_once __DIR__ . '/../bootstrap/app.php';
+
+/** @var \Illuminate\Contracts\Console\Kernel $kernel */
+$kernel = $app->make(\Illuminate\Contracts\Console\Kernel::class);
+
+$steps = [
+    ['migrate', ['--force' => true]],
+    ['config:cache', []],
+    ['route:cache', []],
+    ['view:cache', []],
+];
+
+echo "=== Deploy remoto (sin terminal) ===\n\n";
+
+foreach ($steps as [$command, $params]) {
+    echo ">> php artisan {$command}\n";
+    $status = $kernel->call($command, $params);
+    echo $kernel->output();
+    echo "Código de salida: {$status}\n\n";
+}
+
+echo "=== Listo ===\n";
+echo "Elimina public/deploy.php desde cPanel ahora.\n";

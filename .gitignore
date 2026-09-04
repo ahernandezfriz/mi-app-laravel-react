@@ -1,5 +1,6 @@
 # Environment files (sensitive)
 backend/.env
+backend/.env.hosting.example
 frontend/.env
 
 # Dependencies
@@ -8,8 +9,19 @@ backend/vendor/
 
 # Build artifacts and cache
 frontend/dist/
+backend/public/app/
 backend/bootstrap/cache/*.php
 backend/storage/logs/*.log
+backend/public/*.zip
+backend/vendor.zip
+backend/public/index - copia.php
+
+# Deploy packages (regenerados por scripts)
+backups/*.zip
+backups/*.sql
+backups/index-public_html-*.php
+backups/PASO-A-PASO-*.txt
+backups/deploy-instrucciones-*.txt
 
 # OS/editor files
 .DS_Store

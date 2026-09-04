@@ -1,0 +1,93 @@
+<?php
+/**
+ * Corrige permisos tras extraer ZIP en cPanel (sin terminal).
+ * Subir a public_html/plataformapie.arielhf.cl/ y abrir UNA vez en el navegador.
+ * BORRAR este archivo al terminar.
+ */
+$expectedToken = '__FIX_TOKEN__';
+$laravelRoot = '/home/arielhfc/apps_laravel/sistema_pie';
+
+if (($_GET['token'] ?? '') !== $expectedToken) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Acceso denegado.');
+}
+
+header('Content-Type: text/plain; charset=utf-8');
+
+if (!is_dir($laravelRoot)) {
+    exit("No se encontro Laravel en: {$laravelRoot}\nEdita la ruta en fix-permissions.php si es distinta.");
+}
+
+function chmodTree(string $path, int $dirMode, int $fileMode, array &$stats): void
+{
+    if (!file_exists($path)) {
+        $stats['missing']++;
+        return;
+    }
+
+    if (is_dir($path)) {
+        if (@chmod($path, $dirMode)) {
+            $stats['dirs']++;
+        } else {
+            $stats['dir_errors']++;
+            echo "No se pudo chmod dir: {$path}\n";
+        }
+
+        $items = @scandir($path);
+        if ($items === false) {
+            $stats['scan_errors']++;
+            echo "No se pudo leer dir: {$path}\n";
+            return;
+        }
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            chmodTree($path . DIRECTORY_SEPARATOR . $item, $dirMode, $fileMode, $stats);
+        }
+
+        return;
+    }
+
+    if (@chmod($path, $fileMode)) {
+        $stats['files']++;
+    } else {
+        $stats['file_errors']++;
+        echo "No se pudo chmod file: {$path}\n";
+    }
+}
+
+$targets = [
+    ['vendor', 0755, 0644],
+    ['bootstrap/cache', 0775, 0664],
+    ['storage', 0775, 0664],
+];
+
+echo "=== Corregir permisos Laravel ===\n";
+echo "Ruta: {$laravelRoot}\n\n";
+
+foreach ($targets as [$relative, $dirMode, $fileMode]) {
+    $full = $laravelRoot . '/' . $relative;
+    $stats = [
+        'dirs' => 0,
+        'files' => 0,
+        'dir_errors' => 0,
+        'file_errors' => 0,
+        'scan_errors' => 0,
+        'missing' => 0,
+    ];
+
+    echo ">> {$relative} (dirs {$dirMode}, files {$fileMode})\n";
+    chmodTree($full, $dirMode, $fileMode, $stats);
+    echo "   dirs: {$stats['dirs']}, files: {$stats['files']}, errores: "
+        . ($stats['dir_errors'] + $stats['file_errors'] + $stats['scan_errors']) . "\n\n";
+}
+
+$probe = $laravelRoot . '/vendor/symfony/deprecation-contracts/function.php';
+echo is_readable($probe)
+    ? "OK: PHP ya puede leer vendor/symfony/deprecation-contracts/function.php\n"
+    : "AVISO: aun no se puede leer el archivo de prueba. Revisa permisos en cPanel o contacta al hosting.\n";
+
+echo "\nElimina fix-permissions.php del servidor ahora.\n";

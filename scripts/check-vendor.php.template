@@ -1,0 +1,77 @@
+<?php
+$token = '__CHECK_TOKEN__';
+if (($_GET['token'] ?? '') !== $token) {
+    http_response_code(403);
+    exit('Acceso denegado');
+}
+
+header('Content-Type: text/plain; charset=utf-8');
+
+$root = '/home/arielhfc/apps_laravel/sistema_pie';
+$vendor = $root . '/vendor';
+$target = $vendor . '/symfony/deprecation-contracts/function.php';
+
+echo "=== CHECK VENDOR ===\n\n";
+echo "vendor dir existe: " . (is_dir($vendor) ? 'SI' : 'NO') . "\n";
+echo "vendor legible: " . (is_readable($vendor) ? 'SI' : 'NO') . "\n";
+echo "archivo objetivo: $target\n";
+echo "existe: " . (file_exists($target) ? 'SI' : 'NO') . "\n";
+echo "legible: " . (is_readable($target) ? 'SI' : 'NO') . "\n";
+
+if (file_exists($target)) {
+    echo "tamano: " . filesize($target) . " bytes\n";
+}
+
+echo "\n-- Contenido vendor/symfony --\n";
+$symfony = $vendor . '/symfony';
+if (is_dir($symfony)) {
+    $items = scandir($symfony) ?: [];
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        echo " - $item\n";
+    }
+} else {
+    echo "NO existe $symfony\n";
+}
+
+echo "\n-- Contenido deprecation-contracts --\n";
+$dep = $vendor . '/symfony/deprecation-contracts';
+if (is_dir($dep)) {
+    foreach (scandir($dep) ?: [] as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $f = $dep . '/' . $item;
+        echo " - $item (" . (is_file($f) ? filesize($f) . ' bytes' : 'dir') . ")\n";
+    }
+} else {
+    echo "NO existe $dep\n";
+}
+
+echo "\n-- Primeros archivos en vendor (max 30) --\n";
+if (is_dir($vendor)) {
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($vendor, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    $n = 0;
+    foreach ($it as $file) {
+        if ($file->isFile()) {
+            echo $file->getPathname() . "\n";
+            if (++$n >= 30) break;
+        }
+    }
+    echo "... (mostrando solo 30)\n";
+}
+
+echo "\n-- Conteo rapido archivos en vendor --\n";
+$count = 0;
+if (is_dir($vendor)) {
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($vendor, FilesystemIterator::SKIP_DOTS)
+    );
+    foreach ($it as $file) {
+        if ($file->isFile()) $count++;
+    }
+}
+echo "total archivos: $count (local correcto ~9181)\n";
+
+echo "\nBORRA check-vendor.php al terminar.\n";

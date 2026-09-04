@@ -1,0 +1,21 @@
+# Colocar en: public_html/plataformapie.arielhf.cl/.htaccess
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # cPanel/Apache: conservar Bearer token para Sanctum
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Redirigir URLs legacy sin /app hacia la SPA
+    RewriteRule ^dashboard(/.*)?$ /app/dashboard$1 [R=302,L]
+    RewriteRule ^login/?$ /app/login [R=302,L]
+    RewriteRule ^register/?$ /app/register [R=302,L]
+    RewriteRule ^forgot-password/?$ /app/forgot-password [R=302,L]
+
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    RewriteRule ^ index.php [L]
+</IfModule>

@@ -47,13 +47,24 @@ function normalizeSessionTime(value) {
   return match ? `${match[1]}:${match[2]}` : '09:00'
 }
 const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary'])
+const APP_BASE = '/app'
 
 function getSectionFromPath(pathname) {
   const cleanPath = String(pathname || '').replace(/\/+$/, '')
   const parts = cleanPath.split('/').filter(Boolean)
-  if (parts[0] !== 'dashboard') return 'overview'
-  const candidate = parts[1] || 'overview'
+  // Acepta /app/dashboard/... y (legacy) /dashboard/...
+  const dashboardIdx = parts[0] === 'app' && parts[1] === 'dashboard'
+    ? 1
+    : parts[0] === 'dashboard'
+      ? 0
+      : -1
+  if (dashboardIdx < 0) return 'overview'
+  const candidate = parts[dashboardIdx + 1] || 'overview'
   return validSections.has(candidate) ? candidate : 'overview'
+}
+
+function dashboardPath(section) {
+  return `${APP_BASE}/dashboard/${section}`
 }
 
 function App() {
@@ -187,7 +198,7 @@ function App() {
     setActiveSectionState(nextSection)
     if (!token) return
     if (!validSections.has(nextSection)) return
-    const nextPath = `/dashboard/${nextSection}`
+    const nextPath = dashboardPath(nextSection)
     if (window.location.pathname !== nextPath) {
       window.history.pushState({}, '', nextPath)
     }
@@ -455,7 +466,7 @@ function App() {
     if (!token) return
     const sectionFromPath = getSectionFromPath(window.location.pathname)
     setActiveSectionState(sectionFromPath)
-    const normalizedPath = `/dashboard/${sectionFromPath}`
+    const normalizedPath = dashboardPath(sectionFromPath)
     if (window.location.pathname !== normalizedPath) {
       window.history.replaceState({}, '', normalizedPath)
     }
