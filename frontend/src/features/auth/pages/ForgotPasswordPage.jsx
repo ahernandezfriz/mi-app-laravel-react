@@ -12,6 +12,8 @@ function ForgotPasswordPage({
   onResetPassword,
   authForm,
   loginForm,
+  authFeedback = '',
+  authFeedbackType = 'info',
 }) {
   const { forgotErrors, resetErrors } = useAuthValidation({
     authForm,
@@ -21,7 +23,12 @@ function ForgotPasswordPage({
   })
 
   return (
-    <AuthLayout title="Recuperar contrasena" subtitle="Solicita enlace y luego actualiza tu contrasena.">
+    <AuthLayout
+      title="Recuperar contrasena"
+      subtitle="Solicita enlace y luego actualiza tu contrasena."
+      feedback={authFeedback}
+      feedbackType={authFeedbackType}
+    >
       <form onSubmit={onForgotPassword} noValidate>
         <FormField
           id="forgot-email"

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Rules\ChileanRutRule;
+use App\Support\ChileanRut;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -13,9 +15,13 @@ class AuthController extends Controller
 {
     public function register(Request $request): JsonResponse
     {
+        $request->merge([
+            'rut' => ChileanRut::format($request->input('rut')),
+        ]);
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'rut' => ['required', 'string', 'max:20'],
+            'rut' => ['required', 'string', 'max:20', new ChileanRutRule, Rule::unique('users', 'rut')],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
             'password' => ['required', 'string', 'min:8'],
             'profession_id' => ['required', 'integer', 'exists:professions,id'],
@@ -65,9 +71,13 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
+        $request->merge([
+            'rut' => ChileanRut::format($request->input('rut')),
+        ]);
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'rut' => ['required', 'string', 'max:20'],
+            'rut' => ['required', 'string', 'max:20', new ChileanRutRule, Rule::unique('users', 'rut')->ignore($user->id)],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'profession_id' => ['required', 'integer', 'exists:professions,id'],
             'password' => ['nullable', 'string', 'min:8', 'confirmed'],

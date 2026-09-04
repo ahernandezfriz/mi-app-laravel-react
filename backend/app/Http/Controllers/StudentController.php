@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\SchoolCourse;
 use App\Models\Student;
 use App\Models\StudentDiagnosis;
+use App\Rules\ChileanRutRule;
+use App\Support\ChileanRut;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -26,9 +28,13 @@ class StudentController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $request->merge([
+            'rut' => ChileanRut::format($request->input('rut')),
+        ]);
+
         $validated = $request->validate([
             'full_name' => ['required', 'string', 'max:255'],
-            'rut' => ['required', 'string', 'max:20', Rule::unique('students', 'rut')],
+            'rut' => ['required', 'string', 'max:20', new ChileanRutRule, Rule::unique('students', 'rut')],
             'student_diagnosis_id' => [
                 'required',
                 'integer',
@@ -71,9 +77,13 @@ class StudentController extends Controller
     {
         $this->authorizeStudent($request, $student);
 
+        $request->merge([
+            'rut' => ChileanRut::format($request->input('rut')),
+        ]);
+
         $validated = $request->validate([
             'full_name' => ['required', 'string', 'max:255'],
-            'rut' => ['required', 'string', 'max:20', Rule::unique('students', 'rut')->ignore($student->id)],
+            'rut' => ['required', 'string', 'max:20', new ChileanRutRule, Rule::unique('students', 'rut')->ignore($student->id)],
             'student_diagnosis_id' => [
                 'required',
                 'integer',

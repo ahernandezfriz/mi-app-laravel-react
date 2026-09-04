@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import AuthLayout from '../components/AuthLayout'
 import FormField from '../../../shared/components/FormField'
 import { useAuthValidation } from '../hooks/useAuthValidation'
+import { normalizeRutInput } from '../../../shared/utils/rut'
 
 function RegisterPage({
   authForm,
@@ -11,6 +12,8 @@ function RegisterPage({
   loginForm,
   forgotForm,
   resetForm,
+  authFeedback = '',
+  authFeedbackType = 'info',
 }) {
   const { registerErrors } = useAuthValidation({
     authForm,
@@ -20,7 +23,12 @@ function RegisterPage({
   })
 
   return (
-    <AuthLayout title="Registro profesional" subtitle="Crea tu cuenta para comenzar a trabajar.">
+    <AuthLayout
+      title="Registro profesional"
+      subtitle="Crea tu cuenta para comenzar a trabajar."
+      feedback={authFeedback}
+      feedbackType={authFeedbackType}
+    >
       <form onSubmit={onRegister} noValidate>
         <FormField
           id="register-name"
@@ -35,8 +43,9 @@ function RegisterPage({
           id="register-rut"
           label="RUT"
           value={authForm.rut}
-          onChange={(e) => setAuthForm({ ...authForm, rut: e.target.value })}
-          placeholder="11.111.111-1"
+          onChange={(e) => setAuthForm({ ...authForm, rut: normalizeRutInput(e.target.value) })}
+          placeholder="12.345.678-5"
+          error={registerErrors.rut}
           required
         />
         <FormField
@@ -82,7 +91,17 @@ function RegisterPage({
             </select>
           )}
         />
-        <button className="actionButton actionButtonPrimary w-full" aria-label="Registrar profesional">
+        {professions.length === 0 && (
+          <p className="mb-3 text-sm text-amber-700">
+            No se pudieron cargar las profesiones. Recarga la pagina e intentalo de nuevo.
+          </p>
+        )}
+        <button
+          type="submit"
+          className="actionButton actionButtonPrimary w-full"
+          aria-label="Registrar profesional"
+          disabled={professions.length === 0}
+        >
           Registrarme
         </button>
       </form>

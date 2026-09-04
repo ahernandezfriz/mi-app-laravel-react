@@ -1,11 +1,15 @@
 import { useMemo } from 'react'
+import { getRutValidationError } from '../../../shared/utils/rut'
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export function useAuthValidation({ authForm, loginForm, forgotForm, resetForm }) {
   return useMemo(() => {
+    const cleanRutValue = String(authForm.rut || '').replace(/[.\-\s]/g, '')
     const registerErrors = {
       name: authForm.name.trim().length < 3 ? 'El nombre debe tener al menos 3 caracteres.' : '',
+      // Mientras escribe no molestar; al completar (cuerpo+DV) validar digito verificador
+      rut: cleanRutValue.length >= 8 ? getRutValidationError(authForm.rut) : '',
       email: !emailRegex.test(authForm.email) ? 'Ingresa un correo valido.' : '',
       password: authForm.password.length < 8 ? 'La contrasena debe tener al menos 8 caracteres.' : '',
       profession_id: !authForm.profession_id ? 'Selecciona una profesion.' : '',

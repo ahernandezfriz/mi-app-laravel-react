@@ -1,5 +1,6 @@
 import FormField from '../../../shared/components/FormField'
 import { useAuthValidation } from '../hooks/useAuthValidation'
+import { normalizeRutInput } from '../../../shared/utils/rut'
 
 function AuthPage({
   authForm,
@@ -41,8 +42,9 @@ function AuthPage({
             id="register-rut"
             label="RUT"
             value={authForm.rut}
-            onChange={(e) => setAuthForm({ ...authForm, rut: e.target.value })}
-            placeholder="11.111.111-1"
+            onChange={(e) => setAuthForm({ ...authForm, rut: normalizeRutInput(e.target.value) })}
+            placeholder="12.345.678-5"
+            error={registerErrors.rut}
             required
           />
           <FormField

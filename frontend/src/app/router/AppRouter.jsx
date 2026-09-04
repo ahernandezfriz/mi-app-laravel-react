@@ -18,6 +18,8 @@ function AppRouter({ token, authProps, children }) {
               authForm={authProps.authForm}
               forgotForm={authProps.forgotForm}
               resetForm={authProps.resetForm}
+              authFeedback={authProps.authFeedback}
+              authFeedbackType={authProps.authFeedbackType}
             />
           )}
         />
@@ -32,6 +34,8 @@ function AppRouter({ token, authProps, children }) {
               loginForm={authProps.loginForm}
               forgotForm={authProps.forgotForm}
               resetForm={authProps.resetForm}
+              authFeedback={authProps.authFeedback}
+              authFeedbackType={authProps.authFeedbackType}
             />
           )}
         />
@@ -47,6 +51,8 @@ function AppRouter({ token, authProps, children }) {
               onResetPassword={authProps.onResetPassword}
               authForm={authProps.authForm}
               loginForm={authProps.loginForm}
+              authFeedback={authProps.authFeedback}
+              authFeedbackType={authProps.authFeedbackType}
             />
           )}
         />

@@ -10,6 +10,7 @@ use App\Models\TaskTemplate;
 use App\Models\TherapySession;
 use App\Models\TreatmentPlan;
 use App\Models\User;
+use App\Support\ChileanRut;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -37,7 +38,7 @@ class DemoDataSeeder extends Seeder
                 [
                     'name' => 'Profesional Demo 1',
                     'email' => 'pro1.demo@miapp.local',
-                    'rut' => '21.111.111-1',
+                    'rut' => '11.111.111-1',
                 ],
                 [
                     'name' => 'Profesional Demo 2',
@@ -51,22 +52,23 @@ class DemoDataSeeder extends Seeder
                     ['email' => $data['email']],
                     [
                         'name' => $data['name'],
-                        'rut' => $data['rut'],
+                        'rut' => ChileanRut::format($data['rut']),
                         'role' => 'profesional',
                         'profession_id' => $professionIds->random(),
                         'password' => Hash::make('password'),
                     ]
                 );
 
-                $studentRutPrefix = sprintf('DEMO-P%d-', $index + 1);
-
-                $existingDemoStudentIds = Student::query()
-                    ->where('rut', 'like', $studentRutPrefix.'%')
-                    ->pluck('id');
-
-                if ($existingDemoStudentIds->isNotEmpty()) {
-                    Student::query()->whereIn('id', $existingDemoStudentIds)->delete();
+                $existingStudentIds = $professional->students()->pluck('students.id');
+                if ($existingStudentIds->isNotEmpty()) {
+                    $professional->students()->detach();
+                    Student::query()->whereIn('id', $existingStudentIds)->delete();
                 }
+
+                // Compatibilidad con seeds antiguos (RUT DEMO-P*)
+                Student::query()
+                    ->where('rut', 'like', sprintf('DEMO-P%d-%%', $index + 1))
+                    ->delete();
 
                 $diagnosisPool = ['TEA', 'TEL expresivo', 'TEL mixto', 'Dislexia', 'TDAH', 'Prematuridad'];
                 foreach ($diagnosisPool as $label) {
@@ -98,9 +100,10 @@ class DemoDataSeeder extends Seeder
                     $course = $courses->random();
                     $diagnosis = $diagnoses->random();
 
+                    $rutBody = (string) (15000000 + ($index * 100) + $i);
                     $student = Student::query()->create([
                         'full_name' => fake()->name(),
-                        'rut' => sprintf('%s%02d', $studentRutPrefix, $i),
+                        'rut' => ChileanRut::format($rutBody.ChileanRut::computeDv($rutBody)),
                         'student_diagnosis_id' => $diagnosis->id,
                         'current_diagnosis' => $diagnosis->name,
                         'school_level_id' => $course->school_level_id,

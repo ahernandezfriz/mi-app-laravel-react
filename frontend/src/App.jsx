@@ -8,6 +8,7 @@ import SessionContextCard from './shared/components/SessionContextCard'
 import SessionsDayCalendar from './shared/components/SessionsDayCalendar'
 import DashboardScheduledSessions from './features/dashboard/components/DashboardScheduledSessions'
 import { monthYearFromISODate, toLocalISODate } from './shared/utils/date'
+import { formatRut, getRutValidationError, normalizeRutInput } from './shared/utils/rut'
 import {
   buildSuspensionObservation,
   getSuspensionReasonDisplayLabel,
@@ -192,6 +193,8 @@ function App() {
   const [sessionsPage, setSessionsPage] = useState(1)
   const [activeSection, setActiveSectionState] = useState(() => getSectionFromPath(window.location.pathname))
   const [toast, setToast] = useState({ show: false, type: 'success', message: '' })
+  const [authFeedback, setAuthFeedback] = useState('')
+  const [authFeedbackType, setAuthFeedbackType] = useState('info')
   const healthUrl = useMemo(() => `${apiBaseUrl}/health`, [])
 
   const setActiveSection = useCallback((nextSection) => {
@@ -445,7 +448,7 @@ function App() {
 
     setProfileForm({
       name: currentUser.name || '',
-      rut: currentUser.rut || '',
+      rut: formatRut(currentUser.rut || ''),
       email: currentUser.email || '',
       profession_id: currentUser.profession_id ? String(currentUser.profession_id) : '',
       password: '',
@@ -706,30 +709,83 @@ function App() {
 
   async function onRegister(e) {
     e.preventDefault()
+    const name = authForm.name.trim()
+    const rut = formatRut(authForm.rut)
+    const email = authForm.email.trim()
+    const password = authForm.password
+    const professionId = Number(authForm.profession_id)
+
+    if (name.length < 3) {
+      notifyAuth('El nombre debe tener al menos 3 caracteres.', 'error')
+      return
+    }
+    const rutError = getRutValidationError(rut)
+    if (rutError) {
+      notifyAuth(rutError, 'error')
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      notifyAuth('Ingresa un correo valido.', 'error')
+      return
+    }
+    if (password.length < 8) {
+      notifyAuth('La contrasena debe tener al menos 8 caracteres.', 'error')
+      return
+    }
+    if (!professionId) {
+      notifyAuth('Selecciona una profesion.', 'error')
+      return
+    }
+
     try {
       const data = await api('/auth/register', {
         method: 'POST',
-        body: JSON.stringify(authForm),
+        body: JSON.stringify({
+          name,
+          rut,
+          email,
+          password,
+          profession_id: professionId,
+        }),
         skipAuth: true,
       })
       localStorage.setItem('token', data.token)
+      setCurrentUser(data.user || null)
+      setAuthFeedback('')
+      notifyUser('Registro correcto. Bienvenido.', 'success')
       setToken(data.token)
-      setStatus('Registro correcto')
     } catch (error) {
-      setStatus(error.message)
+      notifyAuth(error.message || 'No se pudo completar el registro.', 'error')
     }
   }
 
   async function onLogin(e) {
     e.preventDefault()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginForm.email.trim())) {
+      notifyAuth('Ingresa un correo valido.', 'error')
+      return
+    }
+    if (loginForm.password.length < 6) {
+      notifyAuth('La contrasena es obligatoria.', 'error')
+      return
+    }
+
     try {
-      const data = await api('/auth/login', { method: 'POST', body: JSON.stringify(loginForm), skipAuth: true })
+      const data = await api('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: loginForm.email.trim(),
+          password: loginForm.password,
+        }),
+        skipAuth: true,
+      })
       localStorage.setItem('token', data.token)
-      setToken(data.token)
       setCurrentUser(data.user || null)
-      setStatus('Login correcto')
+      setAuthFeedback('')
+      notifyUser('Login correcto', 'success')
+      setToken(data.token)
     } catch (error) {
-      setStatus(error.message)
+      notifyAuth(error.message || 'No se pudo iniciar sesion.', 'error')
     }
   }
 
@@ -741,9 +797,9 @@ function App() {
         body: JSON.stringify(forgotForm),
         skipAuth: true,
       })
-      setStatus(data.message || 'Si el email existe, se envio el enlace.')
+      notifyAuth(data.message || 'Si el email existe, se envio el enlace.', 'success')
     } catch (error) {
-      setStatus(error.message)
+      notifyAuth(error.message || 'No se pudo enviar el enlace.', 'error')
     }
   }
 
@@ -755,10 +811,10 @@ function App() {
         body: JSON.stringify(resetForm),
         skipAuth: true,
       })
-      setStatus(data.message || 'Contrasena actualizada.')
+      notifyAuth(data.message || 'Contrasena actualizada.', 'success')
       setResetForm({ token: '', email: '', password: '', password_confirmation: '' })
     } catch (error) {
-      setStatus(error.message)
+      notifyAuth(error.message || 'No se pudo actualizar la contrasena.', 'error')
     }
   }
 
@@ -767,10 +823,17 @@ function App() {
 
     if (!currentUser) return
 
+    const rut = formatRut(profileForm.rut)
+    const rutError = getRutValidationError(rut)
+    if (rutError) {
+      notifyUser(rutError, 'error')
+      return
+    }
+
     try {
       const payload = {
         name: profileForm.name,
-        rut: profileForm.rut,
+        rut,
         email: profileForm.email,
         profession_id: Number(profileForm.profession_id),
         password: profileForm.password || null,
@@ -968,9 +1031,17 @@ function App() {
         return
       }
 
+      const rut = formatRut(studentForm.rut)
+      const rutError = getRutValidationError(rut)
+      if (rutError) {
+        setStatus(rutError)
+        setToast({ show: true, type: 'error', message: rutError })
+        return
+      }
+
       const payload = {
         full_name: studentForm.full_name,
-        rut: studentForm.rut,
+        rut,
         student_diagnosis_id: studentDiagnosisId,
         school_level_id: Number(studentForm.school_level_id),
         school_course_id: Number(studentForm.school_course_id),
@@ -1019,7 +1090,7 @@ function App() {
     setShowStudentModal(true)
     setStudentForm({
       full_name: student.full_name,
-      rut: student.rut,
+      rut: formatRut(student.rut || ''),
       student_diagnosis_id: student.student_diagnosis_id ? String(student.student_diagnosis_id) : '__new__',
       new_diagnosis_name: student.student_diagnosis_id ? '' : (student.current_diagnosis || ''),
       school_level_id: String(student.school_level_id),
@@ -1470,6 +1541,13 @@ function App() {
     setToast({ show: true, type, message })
   }
 
+  function notifyAuth(message, type = 'info') {
+    setAuthFeedback(message)
+    setAuthFeedbackType(type)
+    setStatus(message)
+    setToast({ show: true, type: type === 'info' ? 'success' : type, message })
+  }
+
   async function onUpdateSessionState({ status, generalObservation }, successMessage) {
     if (!selectedStudent || !selectedPlan || !selectedSession) return null
     try {
@@ -1813,6 +1891,22 @@ function App() {
   )
 
   return (
+    <>
+      {toast.show && (
+        <div className="fixed right-4 top-4 z-[70]">
+          <div
+            className={`min-w-[280px] rounded-[5px] border px-4 py-3 text-sm shadow-lg ${
+              toast.type === 'success'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : 'border-red-200 bg-red-50 text-red-800'
+            }`}
+            role="alert"
+            aria-live="assertive"
+          >
+            {toast.message}
+          </div>
+        </div>
+      )}
     <AppRouter
       token={token}
       authProps={{
@@ -1829,24 +1923,11 @@ function App() {
         onLogin,
         onForgotPassword,
         onResetPassword,
+        authFeedback,
+        authFeedbackType,
       }}
     >
       <main className={token ? 'min-h-screen w-full' : 'appShell'}>
-        {toast.show && (
-          <div className="fixed right-4 top-4 z-[60]">
-            <div
-              className={`min-w-[280px] rounded-[5px] border px-4 py-3 text-sm shadow-lg ${
-                toast.type === 'success'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                  : 'border-red-200 bg-red-50 text-red-800'
-              }`}
-              role="alert"
-              aria-live="assertive"
-            >
-              {toast.message}
-            </div>
-          </div>
-        )}
         {!token && (
           <div className="mb-4">
             <p className="mb-2 text-sm font-medium text-slate-700"><strong>Estado de la API</strong></p>
@@ -2148,7 +2229,8 @@ function App() {
                           id="profile-rut"
                           className="fieldInput mb-0"
                           value={profileForm.rut}
-                          onChange={(e) => setProfileForm((prev) => ({ ...prev, rut: e.target.value }))}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, rut: normalizeRutInput(e.target.value) }))}
+                          placeholder="12.345.678-5"
                         />
                       </div>
                       <div>
@@ -3405,7 +3487,7 @@ function App() {
                       </div>
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-rut">RUT</label>
-                        <input id="student-rut" className="fieldInput mb-0" placeholder="11.111.111-1" value={studentForm.rut} onChange={(e) => setStudentForm({ ...studentForm, rut: e.target.value })} />
+                        <input id="student-rut" className="fieldInput mb-0" placeholder="12.345.678-5" value={studentForm.rut} onChange={(e) => setStudentForm({ ...studentForm, rut: normalizeRutInput(e.target.value) })} />
                       </div>
                       <div className="md:col-span-2">
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-diagnosis">Diagnóstico actual</label>
@@ -3478,6 +3560,7 @@ function App() {
       )}
       </main>
     </AppRouter>
+    </>
   )
 }
 

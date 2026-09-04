@@ -11,6 +11,8 @@ function LoginPage({
   authForm,
   forgotForm,
   resetForm,
+  authFeedback = '',
+  authFeedbackType = 'info',
 }) {
   const [showPassword, setShowPassword] = useState(false)
   const { loginErrors } = useAuthValidation({
@@ -21,7 +23,12 @@ function LoginPage({
   })
 
   return (
-    <AuthLayout title="Iniciar sesion" subtitle="Accede con tu correo y contrasena.">
+    <AuthLayout
+      title="Iniciar sesion"
+      subtitle="Accede con tu correo y contrasena."
+      feedback={authFeedback}
+      feedbackType={authFeedbackType}
+    >
       <form onSubmit={onLogin} noValidate>
         <FormField
           id="login-email"
@@ -92,7 +99,7 @@ function LoginPage({
             </span>
           </div>
         </FormField>
-        <button className="actionButton actionButtonPrimary w-full" aria-label="Iniciar sesion">
+        <button type="submit" className="actionButton actionButtonPrimary w-full" aria-label="Iniciar sesion">
           Ingresar
         </button>
       </form>
