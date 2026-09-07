@@ -13,6 +13,16 @@ El profesional debe poder:
 - Iniciar sesión y cerrar sesión.
 - Editar su perfil (incluyendo contraseña).
 - Recuperar contraseña.
+### 2.3 Autenticación social (futuro)
+- Permitir ingresar/registrarse con Gmail (Google) y, opcionalmente, otro proveedor.
+- Mantener registro/login tradicional (email, contraseña, RUT, profesión).
+- Si OAuth no entrega RUT/profesión, el usuario debe completarlos antes de usar el sistema.
+- Vincular cuenta social a un usuario existente con el mismo email.
+### 2.4 Verificación de email (futuro)
+- Al registrarse con email/contraseña, el profesional debe verificar su correo (enlace o código).
+- Poder reenviar el correo de verificación.
+- Hasta verificar, restringir o limitar el acceso según política definida.
+- Si el registro es vía Google con email ya verificado por el proveedor, no exigir un segundo paso de verificación de email.
 Profesiones iniciales (catálogo):
 - Fonoaudiólogo/a
 - Kinesiólogo/a
@@ -30,6 +40,11 @@ Profesiones iniciales (catálogo):
 - Nombre apoderado
 - Teléfono apoderado
 - Email apoderado
+### 3.2.1 Datos de estudiante (futuro)
+- **Múltiples diagnósticos:** un estudiante puede tener uno o más diagnósticos (no solo uno).
+- Definir si existe un diagnóstico principal para planes/reportes.
+- **Fecha de nacimiento** al crear/editar el estudiante.
+- Mostrar **edad exacta** en pantallas del estudiante, por ejemplo: `7 años 3 meses 20 días` (calculada a la fecha actual).
 ### 3.3 Niveles y cursos
 #### Prebásica
 - Prekínder A, B, C

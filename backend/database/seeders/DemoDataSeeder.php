@@ -104,6 +104,7 @@ class DemoDataSeeder extends Seeder
                     $student = Student::query()->create([
                         'full_name' => fake()->name(),
                         'rut' => ChileanRut::format($rutBody.ChileanRut::computeDv($rutBody)),
+                        'birth_date' => fake()->dateTimeBetween('-18 years', '-4 years')->format('Y-m-d'),
                         'student_diagnosis_id' => $diagnosis->id,
                         'current_diagnosis' => $diagnosis->name,
                         'school_level_id' => $course->school_level_id,
@@ -112,6 +113,8 @@ class DemoDataSeeder extends Seeder
                         'guardian_phone' => fake()->numerify('+569########'),
                         'guardian_email' => fake()->unique()->safeEmail(),
                     ]);
+
+                    $student->diagnoses()->sync([$diagnosis->id]);
 
                     $professional->students()->attach($student->id);
 

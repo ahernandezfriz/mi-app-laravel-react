@@ -3,6 +3,9 @@
  * Formato canónico de almacenamiento/visualización: 12.345.678-9
  */
 
+/** RUT comodín temporal: válido y reutilizable en estudiantes. */
+export const WILDCARD_RUT = '1.111.111-1'
+
 export function cleanRut(value) {
   return String(value || '')
     .trim()
@@ -10,6 +13,10 @@ export function cleanRut(value) {
     .replace(/-/g, '')
     .replace(/\s+/g, '')
     .toUpperCase()
+}
+
+export function isWildcardRut(value) {
+  return cleanRut(value) === cleanRut(WILDCARD_RUT)
 }
 
 export function computeRutDv(body) {
@@ -69,6 +76,8 @@ export function normalizeRutInput(value) {
 }
 
 export function isValidChileanRut(value) {
+  if (isWildcardRut(value)) return true
+
   const clean = cleanRut(value)
   if (!/^\d{7,8}[0-9K]$/.test(clean)) return false
 
@@ -83,6 +92,7 @@ export function isValidChileanRut(value) {
 export function getRutValidationError(value) {
   const clean = cleanRut(value)
   if (!clean) return 'El RUT es obligatorio.'
+  if (isWildcardRut(value)) return ''
   if (clean.length < 8) return 'El RUT esta incompleto.'
   if (!/^\d{7,8}[0-9K]$/.test(clean)) {
     return 'Formato de RUT invalido. Usa 12345678-9 o 12.345.678-9.'

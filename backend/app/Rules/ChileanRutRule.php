@@ -11,7 +11,7 @@ class ChileanRutRule implements ValidationRule
     public function validate(string $attribute, mixed $value, Closure $fail): void
     {
         if (! ChileanRut::isValid(is_string($value) ? $value : null)) {
-            $fail('El :attribute no es un RUT chileno valido.');
+            $fail('El :attribute no es un RUT chileno válido.');
         }
     }
 }

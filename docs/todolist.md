@@ -70,3 +70,9 @@
 - [ ] Filtros avanzados por curso, anio, profesional, estado.
 - [ ] Plantillas de sesiones frecuentes.
 - [ ] Auditoria de cambios relevantes.
+
+### Futuros (orden recomendado: menos → mas invasivo)
+- [x] **1. Fecha de nacimiento / edad exacta:** capturar `birth_date` y mostrar edad tipo `7 años 3 meses 20 dias`; ver `docs/roadmap.md` Fase 8.2. (pendiente validación en UI)
+- [x] **2. Multi-diagnostico:** cada estudiante con 1+ diagnosticos; ver `docs/roadmap.md` Fase 8.1. (pendiente validación en UI)
+- [ ] **3. Verificacion de email:** confirmar correo al registrarse; ver `docs/roadmap.md` Fase 7 (requiere mailer real).
+- [ ] **4. Auth social:** login/registro con Gmail; ver `docs/roadmap.md` Fase 6.

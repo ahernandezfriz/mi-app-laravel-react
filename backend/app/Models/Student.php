@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Support\ExactAge;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -15,6 +17,7 @@ class Student extends Model
     protected $fillable = [
         'full_name',
         'rut',
+        'birth_date',
         'current_diagnosis',
         'student_diagnosis_id',
         'school_level_id',
@@ -23,6 +26,22 @@ class Student extends Model
         'guardian_phone',
         'guardian_email',
     ];
+
+    protected $appends = [
+        'exact_age',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'birth_date' => 'date:Y-m-d',
+        ];
+    }
+
+    protected function exactAge(): Attribute
+    {
+        return Attribute::get(fn (): ?string => ExactAge::format($this->birth_date));
+    }
 
     public function level(): BelongsTo
     {
@@ -37,6 +56,12 @@ class Student extends Model
     public function studentDiagnosis(): BelongsTo
     {
         return $this->belongsTo(StudentDiagnosis::class);
+    }
+
+    public function diagnoses(): BelongsToMany
+    {
+        return $this->belongsToMany(StudentDiagnosis::class, 'student_student_diagnosis')
+            ->withTimestamps();
     }
 
     public function professionals(): BelongsToMany

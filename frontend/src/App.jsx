@@ -8,6 +8,7 @@ import SessionContextCard from './shared/components/SessionContextCard'
 import SessionsDayCalendar from './shared/components/SessionsDayCalendar'
 import DashboardScheduledSessions from './features/dashboard/components/DashboardScheduledSessions'
 import { monthYearFromISODate, toLocalISODate } from './shared/utils/date'
+import { formatExactAge, getBirthDateValidationError } from './shared/utils/exactAge'
 import { formatRut, getRutValidationError, normalizeRutInput } from './shared/utils/rut'
 import {
   buildSuspensionObservation,
@@ -23,7 +24,9 @@ const PAGE_SIZE = 10
 const initialStudent = {
   full_name: '',
   rut: '',
-  student_diagnosis_id: '',
+  birth_date: '',
+  diagnosis_ids: [],
+  diagnosis_picker: '',
   new_diagnosis_name: '',
   school_level_id: '',
   school_course_id: '',
@@ -195,6 +198,8 @@ function App() {
   const [toast, setToast] = useState({ show: false, type: 'success', message: '' })
   const [authFeedback, setAuthFeedback] = useState('')
   const [authFeedbackType, setAuthFeedbackType] = useState('info')
+  const [studentFormErrors, setStudentFormErrors] = useState({})
+  const [isSavingStudent, setIsSavingStudent] = useState(false)
   const healthUrl = useMemo(() => `${apiBaseUrl}/health`, [])
 
   const setActiveSection = useCallback((nextSection) => {
@@ -208,19 +213,32 @@ function App() {
   }, [token])
 
   const api = useCallback(async (path, options = {}) => {
-    const { skipAuth = false, headers: optionHeaders, ...fetchOptions } = options
+    const { skipAuth = false, headers: optionHeaders, timeoutMs = 20000, ...fetchOptions } = options
     const sendAuth = Boolean(token && !skipAuth)
     const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
-    const response = await fetch(`${apiBaseUrl}${path}`, {
-      ...fetchOptions,
-      headers: {
-        Accept: 'application/json',
-        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-        ...(sendAuth ? { Authorization: `Bearer ${token}` } : {}),
-        ...(optionHeaders || {}),
-      },
-    })
+    let response
+    try {
+      response = await fetch(`${apiBaseUrl}${path}`, {
+        ...fetchOptions,
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+          ...(sendAuth ? { Authorization: `Bearer ${token}` } : {}),
+          ...(optionHeaders || {}),
+        },
+      })
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error('El servidor no respondió a tiempo. Revisa que la API esté disponible.')
+      }
+      throw new Error('No se pudo conectar con la API. Verifica que los servicios estén levantados.')
+    } finally {
+      clearTimeout(timeoutId)
+    }
 
     if (response.status === 204) {
       return null
@@ -249,7 +267,7 @@ function App() {
       const validationDetail = data.errors && typeof data.errors === 'object'
         ? Object.values(data.errors).flat().filter(Boolean).join(' ')
         : ''
-      throw new Error(data.message || validationDetail || 'Error en solicitud')
+      throw new Error(validationDetail || data.message || 'Error en solicitud')
     }
 
     return data
@@ -991,87 +1009,128 @@ function App() {
     }
   }
 
+  function validateStudentForm(form) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    const errors = {}
+
+    if (!form.full_name.trim()) {
+      errors.full_name = 'El nombre completo es obligatorio.'
+    } else if (form.full_name.trim().length < 3) {
+      errors.full_name = 'El nombre debe tener al menos 3 caracteres.'
+    }
+
+    const rutError = getRutValidationError(form.rut)
+    if (rutError) {
+      errors.rut = rutError
+    }
+
+    const birthDateError = getBirthDateValidationError(form.birth_date)
+    if (birthDateError) {
+      errors.birth_date = birthDateError
+    }
+
+    const selectedDiagnosisIds = Array.isArray(form.diagnosis_ids) ? form.diagnosis_ids.filter(Boolean) : []
+    const newDiagnosisName = (form.new_diagnosis_name || '').trim()
+    if (selectedDiagnosisIds.length === 0 && form.diagnosis_picker !== '__new__' && !newDiagnosisName) {
+      errors.diagnosis_ids = 'Selecciona al menos un diagnóstico o crea uno nuevo.'
+    }
+    if (form.diagnosis_picker === '__new__' && !newDiagnosisName) {
+      errors.new_diagnosis_name = 'Escribe el nombre del nuevo diagnóstico.'
+    }
+
+    if (!form.school_level_id) {
+      errors.school_level_id = 'Selecciona el nivel educacional.'
+    }
+    if (!form.school_course_id) {
+      errors.school_course_id = 'Selecciona el curso.'
+    }
+
+    if (!form.guardian_name.trim()) {
+      errors.guardian_name = 'El nombre del apoderado es obligatorio.'
+    }
+    if (!form.guardian_phone.trim()) {
+      errors.guardian_phone = 'El teléfono del apoderado es obligatorio.'
+    }
+    if (!form.guardian_email.trim()) {
+      errors.guardian_email = 'El email del apoderado es obligatorio.'
+    } else if (!emailRegex.test(form.guardian_email.trim())) {
+      errors.guardian_email = 'Ingresa un email de apoderado válido.'
+    }
+
+    return errors
+  }
+
   async function onSaveStudent(e) {
     e.preventDefault()
     const path = editingId ? `/students/${editingId}` : '/students'
     const method = editingId ? 'PUT' : 'POST'
-
     const isCreating = !editingId
-    let diagnosisIdRaw = studentForm.student_diagnosis_id
-    if (diagnosisIdRaw === '__new__') {
-      diagnosisIdRaw = ''
-    }
-    const newDiagnosisName = (studentForm.new_diagnosis_name || '').trim()
 
-    if (!diagnosisIdRaw && !newDiagnosisName) {
-      const message = 'Selecciona un diagnóstico o crea uno nuevo.'
+    const errors = validateStudentForm(studentForm)
+    setStudentFormErrors(errors)
+    if (Object.keys(errors).length > 0) {
+      const message = 'Revisa los campos marcados del formulario.'
       setStatus(message)
-      if (isCreating) {
-        setToast({ show: true, type: 'error', message })
-      }
+      notifyUser(message, 'error')
       return
     }
 
+    setIsSavingStudent(true)
     try {
-      let studentDiagnosisId = diagnosisIdRaw ? Number(diagnosisIdRaw) : null
+      const diagnosisIds = [...(studentForm.diagnosis_ids || [])]
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+
+      const newDiagnosisName = (studentForm.new_diagnosis_name || '').trim()
       if (newDiagnosisName) {
         const created = await api('/student-diagnoses', {
           method: 'POST',
           body: JSON.stringify({ name: newDiagnosisName }),
         })
-        studentDiagnosisId = created.id
+        if (created?.id && !diagnosisIds.includes(created.id)) {
+          diagnosisIds.push(created.id)
+        }
       }
 
-      if (!studentDiagnosisId) {
-        const message = 'Selecciona un diagnóstico o crea uno nuevo.'
-        setStatus(message)
-        if (isCreating) {
-          setToast({ show: true, type: 'error', message })
-        }
+      if (diagnosisIds.length === 0) {
+        const message = 'Selecciona al menos un diagnóstico o crea uno nuevo.'
+        setStudentFormErrors({ diagnosis_ids: message })
+        notifyUser(message, 'error')
         return
       }
 
       const rut = formatRut(studentForm.rut)
-      const rutError = getRutValidationError(rut)
-      if (rutError) {
-        setStatus(rutError)
-        setToast({ show: true, type: 'error', message: rutError })
-        return
-      }
-
       const payload = {
-        full_name: studentForm.full_name,
+        full_name: studentForm.full_name.trim(),
         rut,
-        student_diagnosis_id: studentDiagnosisId,
+        birth_date: studentForm.birth_date,
+        diagnosis_ids: diagnosisIds,
         school_level_id: Number(studentForm.school_level_id),
         school_course_id: Number(studentForm.school_course_id),
-        guardian_name: studentForm.guardian_name,
-        guardian_phone: studentForm.guardian_phone,
-        guardian_email: studentForm.guardian_email,
+        guardian_name: studentForm.guardian_name.trim(),
+        guardian_phone: studentForm.guardian_phone.trim(),
+        guardian_email: studentForm.guardian_email.trim(),
       }
 
-      await api(path, { method, body: JSON.stringify(payload) })
+      const savedStudent = await api(path, { method, body: JSON.stringify(payload) })
       setStudentForm(initialStudent)
+      setStudentFormErrors({})
       setEditingId(null)
       setShowStudentModal(false)
       await Promise.all([loadStudents(), loadStudentDiagnoses()])
-      setStatus('Estudiante guardado')
-      if (isCreating) {
-        setToast({
-          show: true,
-          type: 'success',
-          message: 'Estudiante registrado correctamente.',
-        })
+      if (selectedStudent && savedStudent?.id && selectedStudent.id === savedStudent.id) {
+        setSelectedStudent(savedStudent)
       }
+      setStatus('Estudiante guardado')
+      notifyUser(
+        isCreating ? 'Estudiante registrado correctamente.' : 'Estudiante actualizado correctamente.',
+        'success',
+      )
     } catch (error) {
       setStatus(error.message)
-      if (isCreating) {
-        setToast({
-          show: true,
-          type: 'error',
-          message: error.message || 'No se pudo registrar el estudiante.',
-        })
-      }
+      notifyUser(error.message || 'No se pudo registrar el estudiante.', 'error')
+    } finally {
+      setIsSavingStudent(false)
     }
   }
 
@@ -1087,12 +1146,18 @@ function App() {
 
   function onEditStudent(student) {
     setEditingId(student.id)
+    setStudentFormErrors({})
     setShowStudentModal(true)
+    const diagnosisIds = Array.isArray(student.diagnoses) && student.diagnoses.length > 0
+      ? student.diagnoses.map((d) => String(d.id))
+      : (student.student_diagnosis_id ? [String(student.student_diagnosis_id)] : [])
     setStudentForm({
       full_name: student.full_name,
       rut: formatRut(student.rut || ''),
-      student_diagnosis_id: student.student_diagnosis_id ? String(student.student_diagnosis_id) : '__new__',
-      new_diagnosis_name: student.student_diagnosis_id ? '' : (student.current_diagnosis || ''),
+      birth_date: student.birth_date ? String(student.birth_date).slice(0, 10) : '',
+      diagnosis_ids: diagnosisIds,
+      diagnosis_picker: '',
+      new_diagnosis_name: '',
       school_level_id: String(student.school_level_id),
       school_course_id: String(student.school_course_id),
       guardian_name: student.guardian_name,
@@ -1104,6 +1169,7 @@ function App() {
   function onOpenCreateStudentModal() {
     setEditingId(null)
     setStudentForm(initialStudent)
+    setStudentFormErrors({})
     setShowStudentModal(true)
   }
 
@@ -1713,8 +1779,15 @@ function App() {
 
       const matchesCourse = !studentFilters.course || (student.course?.display_name || '') === studentFilters.course
 
-      const diagnosisLabel = (student.student_diagnosis?.name || student.current_diagnosis || '').toLowerCase()
-      const matchesDiagnosis = !diagnosis || diagnosisLabel.includes(diagnosis)
+      const diagnosisNames = [
+        ...(Array.isArray(student.diagnoses) ? student.diagnoses.map((d) => d.name) : []),
+        student.student_diagnosis?.name,
+        student.current_diagnosis,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      const matchesDiagnosis = !diagnosis || diagnosisNames.includes(diagnosis)
 
       return matchesSearch && matchesCourse && matchesDiagnosis
     })
@@ -2441,9 +2514,16 @@ function App() {
                             <td className="px-3 py-3">
                               <p className="font-medium text-slate-900">{student.full_name}</p>
                               <p className="text-xs text-slate-500">RUT: {student.rut}</p>
+                              <p className="text-xs text-slate-500">
+                                Edad: {student.exact_age || formatExactAge(student.birth_date) || 'Sin fecha de nacimiento'}
+                              </p>
                             </td>
                             <td className="px-3 py-3 text-slate-700">{student.course?.display_name || 'Sin curso'}</td>
-                            <td className="px-3 py-3 text-slate-700">{student.student_diagnosis?.name || student.current_diagnosis}</td>
+                            <td className="px-3 py-3 text-slate-700">
+                              {Array.isArray(student.diagnoses) && student.diagnoses.length > 0
+                                ? student.diagnoses.map((d) => d.name).join('; ')
+                                : (student.student_diagnosis?.name || student.current_diagnosis)}
+                            </td>
                             <td className="px-3 py-3">
                               <p className="text-slate-700">{student.guardian_name}</p>
                               <p className="text-xs text-slate-500">{student.guardian_email}</p>
@@ -2531,7 +2611,7 @@ function App() {
                         <tr>
                           <th className="w-28 px-4 py-3 text-left font-semibold text-slate-600">Año</th>
                           <th className="px-4 py-3 text-left font-semibold text-slate-600">Diagnóstico del plan</th>
-                          <th className="w-64 px-4 py-3 text-right font-semibold text-slate-600">Acciones</th>
+                          <th className="min-w-[18rem] whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-600">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -2560,10 +2640,10 @@ function App() {
                               </span>
                             </td>
                             <td className="px-4 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
-                            <td className="px-4 py-3">
-                              <div className="flex flex-wrap justify-end gap-2">
+                            <td className="whitespace-nowrap px-4 py-3">
+                              <div className="flex flex-nowrap items-center justify-end gap-2">
                                 <button
-                                  className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
+                                  className="shrink-0 rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
                                   onClick={() => onSelectPlan(plan)}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
@@ -2575,7 +2655,7 @@ function App() {
                                   </span>
                                 </button>
                                 <button
-                                  className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
+                                  className="shrink-0 rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
                                   onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
@@ -2587,7 +2667,7 @@ function App() {
                                   </span>
                                 </button>
                                 <button
-                                  className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                  className="shrink-0 rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
                                   onClick={() => onDeletePlan(plan.id)}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
@@ -2634,8 +2714,13 @@ function App() {
                       <h3 className="text-base font-semibold text-slate-900">Información del estudiante</h3>
                       <div className="mt-3 space-y-2 text-sm text-slate-700">
                         <p><strong>Nombre:</strong> {selectedStudent.full_name}</p>
+                        <p><strong>Edad:</strong> {selectedStudent.exact_age || formatExactAge(selectedStudent.birth_date) || 'Sin fecha de nacimiento'}</p>
                         <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
-                        <p><strong>Diagnóstico:</strong> {selectedStudent.current_diagnosis}</p>
+                        <p><strong>Diagnóstico:</strong> {
+                          Array.isArray(selectedStudent.diagnoses) && selectedStudent.diagnoses.length > 0
+                            ? selectedStudent.diagnoses.map((d) => d.name).join('; ')
+                            : selectedStudent.current_diagnosis
+                        }</p>
                         <p><strong>Apoderado:</strong> {selectedStudent.guardian_name}</p>
                         <p><strong>Correo:</strong> {selectedStudent.guardian_email}</p>
                         <p><strong>Teléfono:</strong> {selectedStudent.guardian_phone || 'Sin teléfono'}</p>
@@ -2859,6 +2944,7 @@ function App() {
                 <SessionContextCard
                   session={selectedSession}
                   studentName={selectedStudent.full_name}
+                  studentAge={selectedStudent.exact_age || formatExactAge(selectedStudent.birth_date) || ''}
                   planYear={selectedPlan.year}
                   formattedDate={formatDisplayDate(selectedSession.session_date)}
                   formattedTime={formatDisplayTime(selectedSession.session_time)}
@@ -2978,34 +3064,33 @@ function App() {
                   </div>
                 </section>
 
-                <section className={`mt-4 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
-                  selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
-                }`}>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Observación general de la sesión
-                  </label>
-                  <textarea
-                    className={`fieldInput mb-0 min-h-24 ${
-                      selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''
-                    }`}
-                    placeholder="Observaciones generales de la sesión..."
-                    value={sessionObservation}
-                    onChange={(e) => setSessionObservation(e.target.value)}
-                    disabled={selectedSession.status === 'finalizada'}
-                  />
-                </section>
+                <div className="mt-4">
+                  <h2 className="sectionTitle mb-0">Observación general de la sesión</h2>
+                  <section className={`mt-3 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
+                    selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
+                  }`}>
+                    <textarea
+                      className={`fieldInput mb-0 min-h-24 ${
+                        selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''
+                      }`}
+                      placeholder="Observaciones generales de la sesión..."
+                      value={sessionObservation}
+                      onChange={(e) => setSessionObservation(e.target.value)}
+                      disabled={selectedSession.status === 'finalizada'}
+                      aria-label="Observación general de la sesión"
+                    />
+                  </section>
+                </div>
 
-                <section className={`mt-4 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
-                  selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
-                }`}>
-                  <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                    Material complementario en sesión
-                  </h4>
-                  <p className="mt-1 text-xs text-slate-500">
+                <div className="mt-4">
+                  <h2 className="sectionTitle mb-0">Material complementario en sesión</h2>
+                  <p className="mt-1 text-sm text-slate-500">
                     Puedes reutilizar recursos desde tu biblioteca o subir uno nuevo desde tu PC.
                   </p>
-
-                  <form onSubmit={onUploadSessionMaterial} className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1.4fr_1.2fr_1fr_auto]">
+                  <section className={`mt-3 rounded-[5px] border border-slate-200 p-4 shadow-sm ${
+                    selectedSession.status === 'finalizada' ? 'bg-slate-50/80' : 'bg-white'
+                  }`}>
+                  <form onSubmit={onUploadSessionMaterial} className="grid grid-cols-1 gap-2 md:grid-cols-[1.4fr_1.2fr_1fr_auto]">
                     <input
                       className={`fieldInput mb-0 ${selectedSession.status === 'finalizada' ? 'cursor-not-allowed bg-slate-100 text-slate-500' : ''}`}
                       placeholder="Título del material (opcional)"
@@ -3084,7 +3169,8 @@ function App() {
                       </tbody>
                     </table>
                   </div>
-                </section>
+                  </section>
+                </div>
 
                 <section className="mt-4 flex flex-wrap items-center gap-2">
                   {selectedSession.status === 'finalizada' ? (
@@ -3479,76 +3565,237 @@ function App() {
                       ×
                     </button>
                   </div>
-                  <form onSubmit={onSaveStudent}>
+                  <form onSubmit={onSaveStudent} noValidate>
                     <div className="grid gap-3 px-5 py-4 md:grid-cols-2">
-                      <div>
+                      <div className="md:col-span-2">
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-full-name">Nombre completo</label>
-                        <input id="student-full-name" className="fieldInput mb-0" placeholder="Nombre completo" value={studentForm.full_name} onChange={(e) => setStudentForm({ ...studentForm, full_name: e.target.value })} />
+                        <input
+                          id="student-full-name"
+                          className={`fieldInput mb-0 ${studentFormErrors.full_name ? 'border-red-400' : ''}`}
+                          placeholder="Nombre completo"
+                          value={studentForm.full_name}
+                          onChange={(e) => {
+                            setStudentForm({ ...studentForm, full_name: e.target.value })
+                            setStudentFormErrors((prev) => ({ ...prev, full_name: '' }))
+                          }}
+                          aria-invalid={Boolean(studentFormErrors.full_name)}
+                        />
+                        {studentFormErrors.full_name ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.full_name}</p> : null}
                       </div>
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-rut">RUT</label>
-                        <input id="student-rut" className="fieldInput mb-0" placeholder="12.345.678-5" value={studentForm.rut} onChange={(e) => setStudentForm({ ...studentForm, rut: normalizeRutInput(e.target.value) })} />
+                        <input
+                          id="student-rut"
+                          className={`fieldInput mb-0 ${studentFormErrors.rut ? 'border-red-400' : ''}`}
+                          placeholder="12.345.678-5"
+                          value={studentForm.rut}
+                          onChange={(e) => {
+                            setStudentForm({ ...studentForm, rut: normalizeRutInput(e.target.value) })
+                            setStudentFormErrors((prev) => ({ ...prev, rut: '' }))
+                          }}
+                          aria-invalid={Boolean(studentFormErrors.rut)}
+                        />
+                        {studentFormErrors.rut ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.rut}</p> : null}
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-birth-date">Fecha de nacimiento</label>
+                        <input
+                          id="student-birth-date"
+                          type="date"
+                          className={`fieldInput mb-0 ${studentFormErrors.birth_date ? 'border-red-400' : ''}`}
+                          value={studentForm.birth_date}
+                          max={new Date().toISOString().slice(0, 10)}
+                          onChange={(e) => {
+                            setStudentForm({ ...studentForm, birth_date: e.target.value })
+                            setStudentFormErrors((prev) => ({ ...prev, birth_date: '' }))
+                          }}
+                          aria-invalid={Boolean(studentFormErrors.birth_date)}
+                        />
+                        {studentForm.birth_date && !studentFormErrors.birth_date ? (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Edad: {formatExactAge(studentForm.birth_date) || '—'}
+                          </p>
+                        ) : null}
+                        {studentFormErrors.birth_date ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.birth_date}</p> : null}
                       </div>
                       <div className="md:col-span-2">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-diagnosis">Diagnóstico actual</label>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-diagnosis-picker">
+                          Diagnósticos
+                        </label>
+                        {Array.isArray(studentForm.diagnosis_ids) && studentForm.diagnosis_ids.length > 0 ? (
+                          <div className="mb-2 flex flex-wrap gap-2">
+                            {studentForm.diagnosis_ids.map((diagnosisId) => {
+                              const diagnosis = studentDiagnoses.find((d) => String(d.id) === String(diagnosisId))
+                              const label = diagnosis?.name || `Diagnóstico #${diagnosisId}`
+                              return (
+                                <span
+                                  key={diagnosisId}
+                                  className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-800"
+                                >
+                                  {label}
+                                  <button
+                                    type="button"
+                                    className="!m-0 inline-flex h-4 w-4 items-center justify-center rounded-full !border-0 !bg-transparent p-0 text-violet-600 shadow-none transition hover:!bg-violet-100 hover:text-violet-900"
+                                    aria-label={`Quitar ${label}`}
+                                    onClick={() => {
+                                      setStudentForm({
+                                        ...studentForm,
+                                        diagnosis_ids: studentForm.diagnosis_ids.filter((id) => String(id) !== String(diagnosisId)),
+                                      })
+                                      setStudentFormErrors((prev) => ({ ...prev, diagnosis_ids: '' }))
+                                    }}
+                                  >
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+                                    </svg>
+                                  </button>
+                                </span>
+                              )
+                            })}
+                          </div>
+                        ) : null}
                         <select
-                          id="student-diagnosis"
-                          className="fieldInput mb-0"
-                          value={studentForm.student_diagnosis_id || ''}
-                          onChange={(e) => setStudentForm({ ...studentForm, student_diagnosis_id: e.target.value, new_diagnosis_name: '' })}
+                          id="student-diagnosis-picker"
+                          className={`fieldInput mb-0 ${studentFormErrors.diagnosis_ids ? 'border-red-400' : ''}`}
+                          value={studentForm.diagnosis_picker || ''}
+                          onChange={(e) => {
+                            const value = e.target.value
+                            if (!value) {
+                              setStudentForm({ ...studentForm, diagnosis_picker: '' })
+                              return
+                            }
+                            if (value === '__new__') {
+                              setStudentForm({ ...studentForm, diagnosis_picker: '__new__', new_diagnosis_name: '' })
+                              setStudentFormErrors((prev) => ({ ...prev, diagnosis_ids: '', new_diagnosis_name: '' }))
+                              return
+                            }
+                            const alreadySelected = (studentForm.diagnosis_ids || []).some((id) => String(id) === value)
+                            setStudentForm({
+                              ...studentForm,
+                              diagnosis_picker: '',
+                              new_diagnosis_name: '',
+                              diagnosis_ids: alreadySelected
+                                ? studentForm.diagnosis_ids
+                                : [...(studentForm.diagnosis_ids || []), value],
+                            })
+                            setStudentFormErrors((prev) => ({ ...prev, diagnosis_ids: '', new_diagnosis_name: '' }))
+                          }}
+                          aria-invalid={Boolean(studentFormErrors.diagnosis_ids)}
                         >
-                          <option value="">Seleccionar diagnóstico</option>
-                          {studentDiagnoses.map((d) => (
-                            <option key={d.id} value={String(d.id)}>{d.name}</option>
-                          ))}
+                          <option value="">Agregar diagnóstico…</option>
+                          {studentDiagnoses
+                            .filter((d) => !(studentForm.diagnosis_ids || []).includes(String(d.id)))
+                            .map((d) => (
+                              <option key={d.id} value={String(d.id)}>{d.name}</option>
+                            ))}
                           <option value="__new__">+ Crear nuevo diagnóstico</option>
                         </select>
+                        {studentFormErrors.diagnosis_ids ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.diagnosis_ids}</p> : null}
                       </div>
-                      {studentForm.student_diagnosis_id === '__new__' && (
+                      {studentForm.diagnosis_picker === '__new__' && (
                         <div className="md:col-span-2">
                           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-new-diagnosis">Nuevo diagnóstico</label>
                           <input
                             id="student-new-diagnosis"
-                            className="fieldInput mb-0"
+                            className={`fieldInput mb-0 ${studentFormErrors.new_diagnosis_name ? 'border-red-400' : ''}`}
                             placeholder="Ej: TEL expresivo leve"
                             value={studentForm.new_diagnosis_name}
-                            onChange={(e) => setStudentForm({ ...studentForm, new_diagnosis_name: e.target.value })}
+                            onChange={(e) => {
+                              setStudentForm({ ...studentForm, new_diagnosis_name: e.target.value })
+                              setStudentFormErrors((prev) => ({ ...prev, new_diagnosis_name: '' }))
+                            }}
                           />
+                          {studentFormErrors.new_diagnosis_name ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.new_diagnosis_name}</p> : null}
                         </div>
                       )}
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-level">Nivel</label>
-                        <select id="student-level" className="fieldInput mb-0" value={studentForm.school_level_id} onChange={(e) => setStudentForm({ ...studentForm, school_level_id: e.target.value, school_course_id: '' })}>
+                        <select
+                          id="student-level"
+                          className={`fieldInput mb-0 ${studentFormErrors.school_level_id ? 'border-red-400' : ''}`}
+                          value={studentForm.school_level_id}
+                          onChange={(e) => {
+                            setStudentForm({ ...studentForm, school_level_id: e.target.value, school_course_id: '' })
+                            setStudentFormErrors((prev) => ({ ...prev, school_level_id: '', school_course_id: '' }))
+                          }}
+                        >
                           <option value="">Nivel</option>
                           {levels.map((l) => <option key={l.id} value={l.id}>{l.display_name}</option>)}
                         </select>
+                        {studentFormErrors.school_level_id ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.school_level_id}</p> : null}
                       </div>
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="student-course">Curso</label>
-                        <select id="student-course" className="fieldInput mb-0" value={studentForm.school_course_id} onChange={(e) => setStudentForm({ ...studentForm, school_course_id: e.target.value })}>
+                        <select
+                          id="student-course"
+                          className={`fieldInput mb-0 ${studentFormErrors.school_course_id ? 'border-red-400' : ''}`}
+                          value={studentForm.school_course_id}
+                          onChange={(e) => {
+                            setStudentForm({ ...studentForm, school_course_id: e.target.value })
+                            setStudentFormErrors((prev) => ({ ...prev, school_course_id: '' }))
+                          }}
+                        >
                           <option value="">Curso</option>
                           {availableCourses.map((c) => <option key={c.id} value={c.id}>{c.display_name}</option>)}
                         </select>
+                        {studentFormErrors.school_course_id ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.school_course_id}</p> : null}
                       </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-name">Nombre apoderado</label>
-                        <input id="guardian-name" className="fieldInput mb-0" placeholder="Nombre apoderado" value={studentForm.guardian_name} onChange={(e) => setStudentForm({ ...studentForm, guardian_name: e.target.value })} />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-phone">Teléfono apoderado</label>
-                        <input id="guardian-phone" className="fieldInput mb-0" placeholder="Teléfono apoderado" value={studentForm.guardian_phone} onChange={(e) => setStudentForm({ ...studentForm, guardian_phone: e.target.value })} />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-email">Email apoderado</label>
-                        <input id="guardian-email" className="fieldInput mb-0" placeholder="Email apoderado" value={studentForm.guardian_email} onChange={(e) => setStudentForm({ ...studentForm, guardian_email: e.target.value })} />
+                      <div className="md:col-span-2 rounded-[10px] border border-slate-200 bg-slate-100/70 p-3 md:p-4">
+                        <h3 className="mb-3 text-[15px] font-semibold text-slate-700">Datos apoderado</h3>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-name">Nombre apoderado</label>
+                            <input
+                              id="guardian-name"
+                              className={`fieldInput mb-0 ${studentFormErrors.guardian_name ? 'border-red-400' : ''}`}
+                              placeholder="Nombre apoderado"
+                              value={studentForm.guardian_name}
+                              onChange={(e) => {
+                                setStudentForm({ ...studentForm, guardian_name: e.target.value })
+                                setStudentFormErrors((prev) => ({ ...prev, guardian_name: '' }))
+                              }}
+                            />
+                            {studentFormErrors.guardian_name ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.guardian_name}</p> : null}
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-phone">Teléfono apoderado</label>
+                            <input
+                              id="guardian-phone"
+                              className={`fieldInput mb-0 ${studentFormErrors.guardian_phone ? 'border-red-400' : ''}`}
+                              placeholder="Teléfono apoderado"
+                              value={studentForm.guardian_phone}
+                              onChange={(e) => {
+                                setStudentForm({ ...studentForm, guardian_phone: e.target.value })
+                                setStudentFormErrors((prev) => ({ ...prev, guardian_phone: '' }))
+                              }}
+                            />
+                            {studentFormErrors.guardian_phone ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.guardian_phone}</p> : null}
+                          </div>
+                          <div className="md:col-span-2">
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="guardian-email">Email apoderado</label>
+                            <input
+                              id="guardian-email"
+                              className={`fieldInput mb-0 ${studentFormErrors.guardian_email ? 'border-red-400' : ''}`}
+                              placeholder="Email apoderado"
+                              value={studentForm.guardian_email}
+                              onChange={(e) => {
+                                setStudentForm({ ...studentForm, guardian_email: e.target.value })
+                                setStudentFormErrors((prev) => ({ ...prev, guardian_email: '' }))
+                              }}
+                            />
+                            {studentFormErrors.guardian_email ? <p className="mt-1 text-xs text-red-600">{studentFormErrors.guardian_email}</p> : null}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-                      <button type="button" className="actionButton" onClick={() => setShowStudentModal(false)}>
+                      <button type="button" className="actionButton" onClick={() => setShowStudentModal(false)} disabled={isSavingStudent}>
                         Cancelar
                       </button>
-                      <button className="actionButton actionButtonPrimary">{editingId ? 'Actualizar' : 'Crear'}</button>
+                      <button type="submit" className="actionButton actionButtonPrimary" disabled={isSavingStudent}>
+                        {isSavingStudent ? 'Guardando...' : (editingId ? 'Actualizar' : 'Crear')}
+                      </button>
                     </div>
                   </form>
                 </div>

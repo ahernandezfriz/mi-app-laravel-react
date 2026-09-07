@@ -49,12 +49,12 @@ class SchoolCatalogSeeder extends Seeder
             foreach ($config['courses'] as $rawCourse) {
                 [$grade, $section] = $this->parseCourse($rawCourse);
 
-                SchoolCourse::query()->firstOrCreate([
+                SchoolCourse::query()->updateOrCreate([
                     'school_level_id' => $level->id,
                     'grade' => $grade,
                     'section' => $section,
                 ], [
-                    'display_name' => $this->formatCourse($grade, $section, $level->display_name),
+                    'display_name' => $this->formatCourse($grade, $section, $level->display_name, $name),
                 ]);
             }
         }
@@ -72,8 +72,23 @@ class SchoolCatalogSeeder extends Seeder
         return [substr($value, 0, -1), substr($value, -1)];
     }
 
-    private function formatCourse(string $grade, ?string $section, string $levelDisplay): string
+    private function formatCourse(string $grade, ?string $section, string $levelDisplay, string $levelName): string
     {
+        // En prebásica el grado ya es el nombre del curso (Prekinder / Kinder).
+        if ($levelName === 'prebasica') {
+            return trim(sprintf('%s %s', $grade, $section));
+        }
+
+        // En básica el uso habitual es "1 Básico A" (no "1 Basica A").
+        if ($levelName === 'basica') {
+            return trim(sprintf('%s Básico %s', $grade, $section));
+        }
+
+        // En media el uso habitual es "1 Medio A" (no "1 Media A").
+        if ($levelName === 'media') {
+            return trim(sprintf('%s Medio %s', $grade, $section));
+        }
+
         return trim(sprintf('%s %s %s', $grade, $levelDisplay, $section));
     }
 }

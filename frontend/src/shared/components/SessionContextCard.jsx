@@ -17,6 +17,7 @@ function getInitials(name) {
 export default function SessionContextCard({
   session,
   studentName,
+  studentAge = '',
   planYear,
   formattedDate,
   formattedTime,
@@ -31,8 +32,8 @@ export default function SessionContextCard({
 
   return (
     <article className="overflow-hidden rounded-[10px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-white p-4 shadow-sm">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
           <div
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#6e62e5] text-base font-semibold text-white"
             aria-hidden="true"
@@ -47,6 +48,9 @@ export default function SessionContextCard({
                 {statusLabel}
               </span>
             </div>
+            {studentAge ? (
+              <p className="mt-1 text-sm font-medium text-slate-700">{studentAge}</p>
+            ) : null}
             <p className="mt-1 text-sm text-slate-500">
               {planYear ? `Plan ${planYear}` : 'Plan de tratamiento'}
               {sessionWhen ? (
@@ -58,16 +62,22 @@ export default function SessionContextCard({
             </p>
           </div>
         </div>
-      </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 text-sm text-slate-700 md:grid-cols-2">
-        <div className="rounded-[5px] border border-slate-200/80 bg-white/80 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Objetivo</p>
-          <p className="mt-1">{session.objective}</p>
-        </div>
-        <div className="rounded-[5px] border border-slate-200/80 bg-white/80 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Descripción</p>
-          <p className="mt-1">{session.description || 'Sin descripción'}</p>
+        <div
+          className="hidden w-px shrink-0 self-stretch bg-violet-200/90 lg:block"
+          aria-hidden="true"
+        />
+        <div className="border-t border-violet-200/90 pt-3 lg:hidden" aria-hidden="true" />
+
+        <div className="flex min-w-0 flex-1 flex-col justify-center gap-3 lg:pl-1">
+          <div>
+            <p className="text-base font-bold uppercase tracking-wide text-slate-800">Objetivo</p>
+            <p className="mt-1 text-sm font-normal text-slate-700">{session.objective}</p>
+          </div>
+          <div>
+            <p className="text-base font-bold uppercase tracking-wide text-slate-800">Descripción</p>
+            <p className="mt-1 text-sm font-normal text-slate-700">{session.description || 'Sin descripción'}</p>
+          </div>
         </div>
       </div>
 

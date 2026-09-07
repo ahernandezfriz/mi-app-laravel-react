@@ -4,12 +4,20 @@ namespace App\Support;
 
 final class ChileanRut
 {
+    /** RUT comodín temporal: válido y reutilizable en estudiantes. */
+    public const WILDCARD = '1.111.111-1';
+
     public static function clean(?string $value): string
     {
         $clean = strtoupper(trim((string) $value));
         $clean = str_replace(['.', '-', ' '], '', $clean);
 
         return $clean;
+    }
+
+    public static function isWildcard(?string $value): bool
+    {
+        return self::clean($value) === self::clean(self::WILDCARD);
     }
 
     public static function computeDv(string $body): string
@@ -60,6 +68,10 @@ final class ChileanRut
 
     public static function isValid(?string $value): bool
     {
+        if (self::isWildcard($value)) {
+            return true;
+        }
+
         $clean = self::clean($value);
         if (! preg_match('/^\d{7,8}[0-9K]$/', $clean)) {
             return false;
