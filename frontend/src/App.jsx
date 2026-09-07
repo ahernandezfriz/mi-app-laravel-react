@@ -5,6 +5,8 @@ import TaskBankSection from './features/taskTemplates/components/TaskBankSection
 import FeedbackMessage from './shared/components/FeedbackMessage'
 import StudentContextCard from './shared/components/StudentContextCard'
 import SessionContextCard from './shared/components/SessionContextCard'
+import IndicatorDonut from './shared/components/IndicatorDonut'
+import AppFooter from './shared/components/AppFooter'
 import SessionsDayCalendar from './shared/components/SessionsDayCalendar'
 import DashboardScheduledSessions from './features/dashboard/components/DashboardScheduledSessions'
 import { monthYearFromISODate, toLocalISODate } from './shared/utils/date'
@@ -646,6 +648,7 @@ function App() {
       try {
         const series = await Promise.all(
           sessions.map(async (session) => {
+            const status = session.status === 'draft' ? 'pendiente' : session.status
             const tasks = await api(
               `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`,
             )
@@ -658,6 +661,13 @@ function App() {
             return {
               sessionId: session.id,
               sessionDate: session.session_date,
+              status,
+              suspensionReason: status === 'suspendida'
+                ? parseSuspensionReasonValue(session.general_observation)
+                : null,
+              suspensionLabel: status === 'suspendida'
+                ? (getSuspensionReasonDisplayLabel(session.general_observation) || 'Sin motivo')
+                : '',
               averageScore,
               performancePercent,
             }
@@ -1821,9 +1831,9 @@ function App() {
     return String(timeValue).slice(0, 5)
   }
   const currentYear = new Date().getFullYear()
-  const todayDate = new Date().toISOString().slice(0, 10)
-  const finalizedSessionsCount = sessions.filter((session) => session.status === 'finalizada').length
-  const pendingSessionsCount = sessions.filter((session) => session.status !== 'finalizada').length
+  const displaySessionStatus = (status) => (status === 'draft' ? 'pendiente' : status)
+  const finalizedSessionsCount = sessions.filter((session) => displaySessionStatus(session.status) === 'finalizada').length
+  const pendingSessionsCount = sessions.filter((session) => displaySessionStatus(session.status) !== 'finalizada').length
   const sortedScheduledSessions = useMemo(
     () =>
       [...scheduledSessions].sort((a, b) => {
@@ -1833,36 +1843,128 @@ function App() {
       }),
     [scheduledSessions],
   )
-  const totalSessionsCount = sessions.length
-  const suspendedSessions = sessions.filter((session) => session.status === 'suspendida')
-  const sessionsUntilToday = sessions.filter((session) => session.session_date <= todayDate)
-  const finalizedSessionsUntilToday = sessionsUntilToday.filter((session) => session.status === 'finalizada').length
-  const absentSuspensionsUntilToday = sessionsUntilToday.filter(
-    (session) =>
-      session.status === 'suspendida' &&
-      sessionHasSuspensionReason(session.general_observation, 'estudiante_ausente'),
+  const suspendedSessions = sessions.filter((session) => displaySessionStatus(session.status) === 'suspendida')
+  // Sesiones realizadas del plan: finalizadas vs suspendidas por ausencia.
+  const finalizedForAttendance = sessions.filter(
+    (session) => displaySessionStatus(session.status) === 'finalizada',
   ).length
-  const assistanceBase = finalizedSessionsUntilToday + absentSuspensionsUntilToday
-  const attendancePercent = assistanceBase > 0 ? Math.round((finalizedSessionsUntilToday / assistanceBase) * 100) : 0
-  const suspensionPercent = assistanceBase > 0 ? 100 - attendancePercent : 0
-  const suspensionByAbsent = suspendedSessions.filter((session) =>
+  const absentSuspensionsForAttendance = suspendedSessions.filter((session) =>
     sessionHasSuspensionReason(session.general_observation, 'estudiante_ausente'),
   ).length
+  const assistanceBase = finalizedForAttendance + absentSuspensionsForAttendance
+  const attendancePercent = assistanceBase > 0 ? Math.round((finalizedForAttendance / assistanceBase) * 100) : 0
+  const suspensionPercent = assistanceBase > 0 ? 100 - attendancePercent : 0
+  const suspensionByAbsent = absentSuspensionsForAttendance
   const suspensionBySchool = suspendedSessions.filter((session) =>
     sessionHasSuspensionReason(session.general_observation, 'actividad_escolar_suspension'),
   ).length
   const unknownSuspensionReason = Math.max(suspendedSessions.length - suspensionByAbsent - suspensionBySchool, 0)
-  const attendancePieConic = `conic-gradient(#10b981 0% ${attendancePercent}%, #f59e0b ${attendancePercent}% 100%)`
   const suspendedTotal = suspendedSessions.length
-  const suspendedAbsentPercent = suspendedTotal > 0 ? Math.round((suspensionByAbsent / suspendedTotal) * 100) : 0
-  const suspendedSchoolPercent = suspendedTotal > 0 ? Math.round((suspensionBySchool / suspendedTotal) * 100) : 0
-  const suspendedUnknownPercent = Math.max(100 - suspendedAbsentPercent - suspendedSchoolPercent, 0)
-  const suspensionPieConic = `conic-gradient(
-    #ef4444 0% ${suspendedAbsentPercent}%,
-    #8b5cf6 ${suspendedAbsentPercent}% ${suspendedAbsentPercent + suspendedSchoolPercent}%,
-    #94a3b8 ${suspendedAbsentPercent + suspendedSchoolPercent}% 100%
-  )`
-  const displaySessionStatus = (status) => (status === 'draft' ? 'pendiente' : status)
+  const totalSessionsGlobal = sessions.length
+  const globalAttendanceCount = finalizedForAttendance
+  const globalAbsentCount = suspensionByAbsent
+  const globalActivityCount = suspensionBySchool
+  const globalAttendancePercent = totalSessionsGlobal > 0
+    ? Math.round((globalAttendanceCount / totalSessionsGlobal) * 100)
+    : 0
+  const globalAbsentPercent = totalSessionsGlobal > 0
+    ? Math.round((globalAbsentCount / totalSessionsGlobal) * 100)
+    : 0
+  const globalActivityPercent = totalSessionsGlobal > 0
+    ? Math.round((globalActivityCount / totalSessionsGlobal) * 100)
+    : 0
+  const globalOverviewSegments = (() => {
+    if (totalSessionsGlobal <= 0) return []
+    return [
+      {
+        key: 'global_asistencia',
+        label: 'Sesiones realizadas',
+        value: `${globalAttendancePercent}%`,
+        count: globalAttendanceCount,
+        percent: globalAttendancePercent,
+        color: '#10b981',
+      },
+      {
+        key: 'global_inasistencia',
+        label: 'Suspensión por inasistencia',
+        value: `${globalAbsentPercent}%`,
+        count: globalAbsentCount,
+        percent: globalAbsentPercent,
+        color: '#f59e0b',
+      },
+      {
+        key: 'global_actividad',
+        label: 'Suspensión por actividad',
+        value: `${globalActivityPercent}%`,
+        count: globalActivityCount,
+        percent: globalActivityPercent,
+        color: '#d946ef',
+      },
+    ].filter((segment) => segment.count > 0)
+  })()
+  const attendanceSegments = (() => {
+    if (assistanceBase <= 0) return []
+    const raw = [
+      {
+        key: 'asistencia',
+        label: 'Sesiones realizadas',
+        value: `${attendancePercent}%`,
+        count: finalizedForAttendance,
+        color: '#10b981',
+      },
+      {
+        key: 'inasistencia',
+        label: 'Inasistencia',
+        value: `${suspensionPercent}%`,
+        count: absentSuspensionsForAttendance,
+        color: '#f59e0b',
+      },
+    ].filter((segment) => segment.count > 0)
+
+    let used = 0
+    return raw.map((segment, index) => {
+      const percent = index === raw.length - 1
+        ? Math.max(100 - used, 0)
+        : Math.round((segment.count / assistanceBase) * 100)
+      used += percent
+      return { ...segment, percent }
+    })
+  })()
+  const suspensionSegments = (() => {
+    if (suspendedTotal <= 0) return []
+    const raw = [
+      {
+        key: 'ausente',
+        label: 'Estudiante ausente',
+        value: suspensionByAbsent,
+        count: suspensionByAbsent,
+        color: '#ef4444',
+      },
+      {
+        key: 'actividad',
+        label: 'Actividad escolar/suspensión',
+        value: suspensionBySchool,
+        count: suspensionBySchool,
+        color: '#d946ef',
+      },
+      {
+        key: 'sin_motivo',
+        label: 'Sin motivo',
+        value: unknownSuspensionReason,
+        count: unknownSuspensionReason,
+        color: '#94a3b8',
+      },
+    ].filter((segment) => segment.count > 0)
+
+    let used = 0
+    return raw.map((segment, index) => {
+      const percent = index === raw.length - 1
+        ? Math.max(100 - used, 0)
+        : Math.round((segment.count / suspendedTotal) * 100)
+      used += percent
+      return { ...segment, percent }
+    })
+  })()
   const displaySessionStatusLabel = (session) => {
     const status = displaySessionStatus(session?.status)
     if (status !== 'suspendida') return status
@@ -1935,18 +2037,51 @@ function App() {
   const chartWidth = 720
   const chartHeight = 220
   const chartPadding = 28
-  const plottedSeries = sessionRatingSeries.filter((entry) => entry.averageScore !== null)
-  const chartPoints = plottedSeries.map((entry, index) => {
+  const chartTimeline = [...sessionRatingSeries]
+    .filter((entry) => (
+      (entry.status === 'finalizada' && entry.performancePercent !== null)
+      || entry.status === 'suspendida'
+    ))
+    .sort((a, b) => {
+      const byDate = String(a.sessionDate || '').localeCompare(String(b.sessionDate || ''))
+      return byDate !== 0 ? byDate : a.sessionId - b.sessionId
+    })
+  const chartEvents = chartTimeline.map((entry, index) => {
     const x =
       chartPadding +
-      (plottedSeries.length > 1
-        ? (index / (plottedSeries.length - 1)) * (chartWidth - chartPadding * 2)
+      (chartTimeline.length > 1
+        ? (index / (chartTimeline.length - 1)) * (chartWidth - chartPadding * 2)
         : (chartWidth - chartPadding * 2) / 2)
+
+    if (entry.status === 'suspendida') {
+      const color = entry.suspensionReason === 'estudiante_ausente'
+        ? '#f59e0b'
+        : entry.suspensionReason === 'actividad_escolar_suspension'
+          ? '#d946ef'
+          : '#f43f5e'
+      return {
+        ...entry,
+        kind: 'suspension',
+        x,
+        y: chartHeight - chartPadding,
+        color,
+      }
+    }
+
     const normalized = ((entry.averageScore - 1) / 2) * (chartHeight - chartPadding * 2)
     const y = chartHeight - chartPadding - normalized
-    return { ...entry, x, y }
+    return {
+      ...entry,
+      kind: 'performance',
+      x,
+      y,
+      color: '#a21caf',
+    }
   })
+  const chartPoints = chartEvents.filter((entry) => entry.kind === 'performance')
+  const suspensionChartPoints = chartEvents.filter((entry) => entry.kind === 'suspension')
   const polylinePoints = chartPoints.map((point) => `${point.x},${point.y}`).join(' ')
+  const hasChartData = chartEvents.length > 0
   const renderPagination = (currentPage, totalPages, onPrev, onNext) => (
     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
       <span>
@@ -2695,7 +2830,10 @@ function App() {
               </section>
             )}
             {activeSection === 'sessions' && selectedStudent && selectedPlan && (
-              <section className="sectionCard">
+              <section className="space-y-4">
+                <StudentContextCard student={selectedStudent} planYear={selectedPlan.year} />
+
+                <section className="sectionCard">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h2 className="sectionTitle mb-0">Sesiones del plan de tratamiento {selectedPlan.year}</h2>
                   <div className="flex items-center gap-2">
@@ -2709,34 +2847,40 @@ function App() {
                 </div>
 
                 <section className="rounded-[5px] border border-slate-200 bg-slate-50 p-4">
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm lg:col-span-1">
-                      <h3 className="text-base font-semibold text-slate-900">Información del estudiante</h3>
-                      <div className="mt-3 space-y-2 text-sm text-slate-700">
-                        <p><strong>Nombre:</strong> {selectedStudent.full_name}</p>
-                        <p><strong>Edad:</strong> {selectedStudent.exact_age || formatExactAge(selectedStudent.birth_date) || 'Sin fecha de nacimiento'}</p>
-                        <p><strong>Curso:</strong> {selectedStudent.course?.display_name || 'Sin curso'}</p>
-                        <p><strong>Diagnóstico:</strong> {
-                          Array.isArray(selectedStudent.diagnoses) && selectedStudent.diagnoses.length > 0
-                            ? selectedStudent.diagnoses.map((d) => d.name).join('; ')
-                            : selectedStudent.current_diagnosis
-                        }</p>
-                        <p><strong>Apoderado:</strong> {selectedStudent.guardian_name}</p>
-                        <p><strong>Correo:</strong> {selectedStudent.guardian_email}</p>
-                        <p><strong>Teléfono:</strong> {selectedStudent.guardian_phone || 'Sin teléfono'}</p>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_3fr]">
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                      <h3 className="text-base font-semibold text-slate-900">Indicadores</h3>
+                      <div className="mt-3 grid grid-cols-1 gap-3">
                         <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Asistencia</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resumen global del plan</p>
                           <div className="mt-2 flex items-center gap-3">
-                            <div className="relative h-20 w-20 rounded-full" style={{ background: attendancePieConic }}>
-                              <div className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
-                            </div>
+                            <IndicatorDonut
+                              key={`global-${totalSessionsGlobal}-${globalAttendanceCount}-${globalAbsentCount}-${globalActivityCount}`}
+                              segments={globalOverviewSegments}
+                              emptyLabel="Sin sesiones registradas en este plan"
+                            />
                             <div className="space-y-1 text-xs text-slate-700">
-                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />Asistencia: <strong>{attendancePercent}%</strong></p>
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />Sesiones realizadas: <strong>{globalAttendancePercent}%</strong></p>
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />Susp. inasistencia: <strong>{globalAbsentPercent}%</strong></p>
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-fuchsia-500" />Susp. actividad: <strong>{globalActivityPercent}%</strong></p>
+                              <p className="pt-1 text-slate-500">Total sesiones: {totalSessionsGlobal}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sesiones realizadas</p>
+                          <div className="mt-2 flex items-center gap-3">
+                            <IndicatorDonut
+                              key={`attendance-${assistanceBase}-${attendancePercent}-${suspensionPercent}`}
+                              segments={attendanceSegments}
+                              emptyLabel="Sin sesiones realizadas ni inasistencias para calcular"
+                            />
+                            <div className="space-y-1 text-xs text-slate-700">
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />Realizadas: <strong>{attendancePercent}%</strong></p>
                               <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />Inasistencia: <strong>{suspensionPercent}%</strong></p>
-                              <p className="pt-1 text-slate-500">Base: {finalizedSessionsUntilToday}/{assistanceBase || 0}</p>
+                              <p className="pt-1 text-slate-500">Base: {finalizedForAttendance}/{assistanceBase || 0}</p>
                             </div>
                           </div>
                         </div>
@@ -2747,9 +2891,11 @@ function App() {
                             <p className="mt-2 text-xs text-slate-500">Sin sesiones suspendidas.</p>
                           ) : (
                             <div className="mt-2 flex items-center gap-3">
-                              <div className="relative h-20 w-20 rounded-full" style={{ background: suspensionPieConic }}>
-                                <div className="absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
-                              </div>
+                              <IndicatorDonut
+                                key={`suspension-${suspendedTotal}-${suspensionByAbsent}-${suspensionBySchool}-${unknownSuspensionReason}`}
+                                segments={suspensionSegments}
+                                emptyLabel="Sin motivos de suspensión para graficar"
+                              />
                               <div className="space-y-1 text-xs text-slate-700">
                                 <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-red-500" />Ausente: <strong>{suspensionByAbsent}</strong></p>
                                 <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-fuchsia-500" />Actividad: <strong>{suspensionBySchool}</strong></p>
@@ -2758,37 +2904,54 @@ function App() {
                             </div>
                           )}
                         </div>
+                        </div>
                       </div>
                     </article>
 
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm lg:col-span-2">
+                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
                       <h3 className="text-base font-semibold text-slate-900">Gráfico de sesiones</h3>
                       <p className="mt-1 text-xs text-slate-500">
-                        Rendimiento porcentual por sesión basado en las calificaciones de tareas.
+                        Progreso por sesiones realizadas y marcas de días suspendidos en la misma línea de tiempo.
                       </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-600">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#a21caf]" />
+                          Sesión realizada (progreso %)
+                        </span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rotate-45 bg-amber-500" />
+                          Suspensión por inasistencia
+                        </span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rotate-45 bg-fuchsia-500" />
+                          Suspensión por actividad
+                        </span>
+                      </div>
                       <div className="mt-4 rounded-[5px] border border-slate-200 bg-slate-50 p-3">
-                        {chartPoints.length > 0 ? (
+                        {hasChartData ? (
                           <div className="overflow-x-auto">
                             <svg
                               className="session-chart min-w-[640px]"
                               viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                               role="img"
-                              aria-label="Gráfico lineal de promedio de calificaciones por sesión"
+                              aria-label="Gráfico lineal de progreso y suspensiones por sesión"
                             >
                               <line x1={chartPadding} y1={chartHeight - chartPadding} x2={chartWidth - chartPadding} y2={chartHeight - chartPadding} stroke="#cbd5e1" strokeWidth="1" />
                               <line x1={chartPadding} y1={chartPadding} x2={chartPadding} y2={chartHeight - chartPadding} stroke="#cbd5e1" strokeWidth="1" />
                               <line x1={chartPadding} y1={chartHeight - chartPadding} x2={chartWidth - chartPadding} y2={chartHeight - chartPadding} stroke="#fde68a" strokeWidth="1" strokeDasharray="4 4" />
                               <line x1={chartPadding} y1={chartHeight / 2} x2={chartWidth - chartPadding} y2={chartHeight / 2} stroke="#fde68a" strokeWidth="1" strokeDasharray="4 4" />
                               <line x1={chartPadding} y1={chartPadding} x2={chartWidth - chartPadding} y2={chartPadding} stroke="#fde68a" strokeWidth="1" strokeDasharray="4 4" />
-                              <polyline
-                                className="session-chart-line"
-                                fill="none"
-                                stroke="#a21caf"
-                                strokeWidth="2.5"
-                                points={polylinePoints}
-                              />
+                              {chartPoints.length > 1 ? (
+                                <polyline
+                                  className="session-chart-line"
+                                  fill="none"
+                                  stroke="#a21caf"
+                                  strokeWidth="2.5"
+                                  points={polylinePoints}
+                                />
+                              ) : null}
                               {chartPoints.map((point) => (
-                                <g key={point.sessionId}>
+                                <g key={`perf-${point.sessionId}`}>
                                   <circle
                                     className="session-chart-point"
                                     cx={point.x}
@@ -2798,12 +2961,36 @@ function App() {
                                     stroke="#ffffff"
                                     strokeWidth="2"
                                   >
-                                    <title>{`${point.sessionDate}: ${point.performancePercent}%`}</title>
+                                    <title>{`${formatDisplayDate(point.sessionDate)}: ${point.performancePercent}%`}</title>
                                   </circle>
-                                  <text x={point.x} y={chartHeight - 8} textAnchor="middle" fontSize="10" fill="#475569">
-                                    {formatDisplayDate(point.sessionDate)}
-                                  </text>
                                 </g>
+                              ))}
+                              {suspensionChartPoints.map((point) => (
+                                <g key={`susp-${point.sessionId}`}>
+                                  <line
+                                    x1={point.x}
+                                    y1={chartPadding}
+                                    x2={point.x}
+                                    y2={chartHeight - chartPadding}
+                                    stroke={point.color}
+                                    strokeWidth="1.5"
+                                    strokeDasharray="3 3"
+                                    opacity="0.45"
+                                  />
+                                  <polygon
+                                    points={`${point.x},${point.y - 7} ${point.x + 7},${point.y} ${point.x},${point.y + 7} ${point.x - 7},${point.y}`}
+                                    fill={point.color}
+                                    stroke="#ffffff"
+                                    strokeWidth="1.5"
+                                  >
+                                    <title>{`${formatDisplayDate(point.sessionDate)}: suspendida (${point.suspensionLabel})`}</title>
+                                  </polygon>
+                                </g>
+                              ))}
+                              {chartEvents.map((point) => (
+                                <text key={`label-${point.sessionId}`} x={point.x} y={chartHeight - 8} textAnchor="middle" fontSize="10" fill="#475569">
+                                  {formatDisplayDate(point.sessionDate)}
+                                </text>
                               ))}
                               <text x={8} y={chartPadding + 2} fontSize="10" fill="#475569">100%</text>
                               <text x={8} y={chartHeight / 2 + 2} fontSize="10" fill="#475569">50%</text>
@@ -2812,7 +2999,7 @@ function App() {
                           </div>
                         ) : (
                           <div className="flex min-h-[180px] items-center justify-center text-sm text-slate-500">
-                            Sin calificaciones registradas para graficar.
+                            Sin sesiones realizadas ni suspendidas para graficar.
                           </div>
                         )}
                       </div>
@@ -2937,6 +3124,7 @@ function App() {
                   () => setSessionsPage((prev) => Math.min(sessionsTotalPages, prev + 1)),
                 )}
 
+                </section>
               </section>
             )}
             {activeSection === 'sessionDetail' && selectedStudent && selectedPlan && selectedSession && (
@@ -3801,6 +3989,7 @@ function App() {
                 </div>
               </div>
             )}
+            <AppFooter />
             </main>
           </div>
         </section>
