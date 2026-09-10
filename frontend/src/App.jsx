@@ -21,7 +21,8 @@ import {
   SUSPENSION_REASON_OPTIONS,
 } from './shared/utils/suspensionReason'
 
-const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api'
+const apiBaseUrl = import.meta.env.VITE_API_URL
+  || (import.meta.env.DEV ? 'http://localhost:8080/api' : '/api')
 const PAGE_SIZE = 10
 const initialStudent = {
   full_name: '',

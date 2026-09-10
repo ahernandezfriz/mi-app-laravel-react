@@ -2,37 +2,69 @@
 <html lang="es">
 <head>
     <meta charset="utf-8">
-    <style>
-        body { font-family: DejaVu Sans, sans-serif; font-size: 12px; color: #111827; }
-        h1, h2, h3 { margin: 0 0 8px; }
-        .section { margin-bottom: 14px; }
-        .meta p { margin: 2px 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
-        th { background: #f3f4f6; text-align: left; }
-    </style>
+    @include('reports.partials.styles')
 </head>
 <body>
-    <h1>Informe de sesion terapeutica</h1>
+    <div class="banner">
+        <h1>Informe de sesión terapéutica</h1>
+        <p>Plan {{ $plan->year }} · {{ $student->full_name }}</p>
+    </div>
 
     <div class="section meta">
-        <p><strong>Estudiante:</strong> {{ $student->full_name }}</p>
-        <p><strong>Curso:</strong> {{ optional($student->course)->display_name }}</p>
-        <p><strong>Diagnostico actual:</strong> {{ $student->current_diagnosis }}</p>
-        <p><strong>Plan anual:</strong> {{ $plan->year }}</p>
-        <p><strong>Sesion:</strong> {{ $session->session_date }} ({{ $session->status }})</p>
-        <p><strong>Objetivo:</strong> {{ $session->objective }}</p>
-        <p><strong>Descripcion:</strong> {{ $session->description ?: 'Sin descripcion' }}</p>
+        <table>
+            <tr>
+                <td width="50%">
+                    <div class="label">Estudiante</div>
+                    <div class="value">{{ $student->full_name }}</div>
+                </td>
+                <td width="50%">
+                    <div class="label">Curso</div>
+                    <div class="value">{{ optional($student->course)->display_name ?: '—' }}</div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="label">Edad</div>
+                    <div class="value">{{ $exactAge }}@if($ageReference) <span class="muted">(al {{ $ageReference }})</span>@endif</div>
+                </td>
+                <td>
+                    <div class="label">Diagnóstico actual</div>
+                    <div class="value">{{ $student->current_diagnosis }}</div>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="label">Sesión</div>
+                    <div class="value">{{ \Carbon\Carbon::parse($session->session_date)->format('d-m-Y') }} ({{ $session->status }})</div>
+                </td>
+                <td>
+                    <div class="label">Plan anual</div>
+                    <div class="value">{{ $plan->year }}</div>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="2">
+                    <div class="label">Objetivo</div>
+                    <div class="value">{{ $session->objective }}</div>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="2">
+                    <div class="label">Descripción</div>
+                    <div class="value">{{ $session->description ?: 'Sin descripción' }}</div>
+                </td>
+            </tr>
+        </table>
     </div>
 
     <div class="section">
-        <h3>Tareas y calificaciones</h3>
-        <table>
+        <h2>Tareas y calificaciones</h2>
+        <table class="data-table">
             <thead>
                 <tr>
                     <th>Tarea</th>
-                    <th>Descripcion</th>
-                    <th>Calificacion</th>
+                    <th>Descripción</th>
+                    <th>Calificación</th>
                 </tr>
             </thead>
             <tbody>
@@ -40,15 +72,24 @@
                     <tr>
                         <td>{{ $task->name }}</td>
                         <td>{{ $task->description ?: '-' }}</td>
-                        <td>{{ $task->rating }}</td>
+                        <td>
+                            @switch($task->rating)
+                                @case('con_dificultad') No lo logra @break
+                                @case('por_lograr') Por lograr @break
+                                @case('logrado') Lo logra @break
+                                @default {{ $task->rating ?: '-' }}
+                            @endswitch
+                        </td>
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="3">No hay tareas registradas en esta sesion.</td>
+                        <td colspan="3">No hay tareas registradas en esta sesión.</td>
                     </tr>
                 @endforelse
             </tbody>
         </table>
     </div>
+
+    @include('reports.partials.professional-signature')
 </body>
 </html>
