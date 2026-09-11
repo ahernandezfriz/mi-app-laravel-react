@@ -40,7 +40,13 @@ class Student extends Model
 
     protected function exactAge(): Attribute
     {
-        return Attribute::get(fn (): ?string => ExactAge::format($this->birth_date));
+        return Attribute::get(function (): ?string {
+            if (! class_exists(ExactAge::class)) {
+                return null;
+            }
+
+            return ExactAge::format($this->birth_date);
+        });
     }
 
     public function level(): BelongsTo

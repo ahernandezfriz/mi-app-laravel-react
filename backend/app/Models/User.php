@@ -83,4 +83,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(MediaLibraryItem::class);
     }
+
+    public function workshops(): HasMany
+    {
+        return $this->hasMany(Workshop::class);
+    }
 }

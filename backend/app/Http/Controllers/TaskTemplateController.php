@@ -7,6 +7,7 @@ use App\Models\TaskCategory;
 use App\Models\TaskTemplate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class TaskTemplateController extends Controller
 {
@@ -33,6 +34,9 @@ class TaskTemplateController extends Controller
                 $builder
                     ->where('name', 'like', "%{$search}%")
                     ->orWhere('description', 'like', "%{$search}%");
+                if ($this->hasObjectiveColumn()) {
+                    $builder->orWhere('objective', 'like', "%{$search}%");
+                }
             });
         }
 
@@ -62,19 +66,12 @@ class TaskTemplateController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'task_category_id' => ['nullable', 'integer'],
-            'is_favorite' => ['nullable', 'boolean'],
-        ]);
+        $validated = $request->validate($this->templatePayloadRules());
 
         $category = $this->resolveCategory($request, $validated['task_category_id'] ?? null);
 
         $task = $request->user()->taskTemplates()->create([
-            ...$validated,
-            'task_category_id' => $category?->id,
-            'category' => $category?->name,
+            ...$this->templateAttributes($validated, $category),
             'last_edited_by_user_id' => $request->user()->id,
         ]);
 
@@ -86,21 +83,14 @@ class TaskTemplateController extends Controller
         $this->authorizeOwnership($request, $taskTemplate);
 
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'task_category_id' => ['nullable', 'integer'],
-            'is_favorite' => ['nullable', 'boolean'],
+            ...$this->templatePayloadRules(),
             'apply_to_pending_sessions' => ['nullable', 'boolean'],
         ]);
 
         $category = $this->resolveCategory($request, $validated['task_category_id'] ?? null);
 
         $taskTemplate->update([
-            'name' => $validated['name'],
-            'description' => $validated['description'] ?? null,
-            'task_category_id' => $category?->id,
-            'category' => $category?->name,
-            'is_favorite' => $validated['is_favorite'] ?? false,
+            ...$this->templateAttributes($validated, $category),
             'last_edited_by_user_id' => $request->user()->id,
         ]);
 
@@ -153,16 +143,67 @@ class TaskTemplateController extends Controller
     {
         $this->authorizeOwnership($request, $taskTemplate);
 
-        $copy = TaskTemplate::query()->create([
+        $copyAttributes = [
             'user_id' => $request->user()->id,
             'name' => sprintf('%s (copia)', $taskTemplate->name),
             'description' => $taskTemplate->description,
             'category' => $taskTemplate->category,
+            'task_category_id' => $taskTemplate->task_category_id,
             'is_favorite' => $taskTemplate->is_favorite,
             'last_edited_by_user_id' => $request->user()->id,
-        ]);
+        ];
+        if ($this->hasObjectiveColumn()) {
+            $copyAttributes['objective'] = $taskTemplate->objective;
+        }
+
+        $copy = TaskTemplate::query()->create($copyAttributes);
 
         return response()->json($copy, 201);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function templatePayloadRules(): array
+    {
+        $rules = [
+            'name' => ['required', 'string', 'max:255'],
+            'description' => ['nullable', 'string'],
+            'task_category_id' => ['nullable', 'integer'],
+            'is_favorite' => ['nullable', 'boolean'],
+        ];
+
+        if ($this->hasObjectiveColumn()) {
+            $rules['objective'] = ['nullable', 'string', 'max:255'];
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @return array<string, mixed>
+     */
+    private function templateAttributes(array $validated, ?TaskCategory $category): array
+    {
+        $attributes = [
+            'name' => $validated['name'],
+            'description' => $validated['description'] ?? null,
+            'task_category_id' => $category?->id,
+            'category' => $category?->name,
+            'is_favorite' => $validated['is_favorite'] ?? false,
+        ];
+
+        if ($this->hasObjectiveColumn() && array_key_exists('objective', $validated)) {
+            $attributes['objective'] = $validated['objective'] ?: null;
+        }
+
+        return $attributes;
+    }
+
+    private function hasObjectiveColumn(): bool
+    {
+        return Schema::hasColumn('task_templates', 'objective');
     }
 
     private function authorizeOwnership(Request $request, TaskTemplate $taskTemplate): void

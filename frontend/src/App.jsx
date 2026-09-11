@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 import AppRouter from './app/router/AppRouter'
 import TaskBankSection from './features/taskTemplates/components/TaskBankSection'
+import WorkshopsSection from './features/workshops/components/WorkshopsSection'
+import WorkshopCourseSection from './features/workshops/components/WorkshopCourseSection'
 import FeedbackMessage from './shared/components/FeedbackMessage'
 import StudentContextCard from './shared/components/StudentContextCard'
 import SessionContextCard from './shared/components/SessionContextCard'
@@ -24,6 +26,20 @@ import {
 const apiBaseUrl = import.meta.env.VITE_API_URL
   || (import.meta.env.DEV ? 'http://localhost:8080/api' : '/api')
 const PAGE_SIZE = 10
+
+function emptyWorkshopForm(overrides = {}) {
+  return {
+    name: '',
+    objective: '',
+    description: '',
+    held_on: toLocalISODate(),
+    school_level_id: '',
+    school_course_id: '',
+    file: null,
+    ...overrides,
+  }
+}
+
 const initialStudent = {
   full_name: '',
   rut: '',
@@ -53,7 +69,7 @@ function normalizeSessionTime(value) {
   const match = String(value).trim().match(/^(\d{2}):(\d{2})/)
   return match ? `${match[1]}:${match[2]}` : '09:00'
 }
-const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary'])
+const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary', 'workshops', 'workshopCourse'])
 const APP_BASE = '/app'
 
 function getSectionFromPath(pathname) {
@@ -153,6 +169,7 @@ function App() {
   })
   const [templateForm, setTemplateForm] = useState({
     name: '',
+    objective: '',
     description: '',
     category: '',
     is_favorite: false,
@@ -173,6 +190,12 @@ function App() {
     title: '',
     file: null,
   })
+  const [workshopCourses, setWorkshopCourses] = useState([])
+  const [workshops, setWorkshops] = useState([])
+  const [selectedWorkshopCourse, setSelectedWorkshopCourse] = useState(null)
+  const [workshopForm, setWorkshopForm] = useState(() => emptyWorkshopForm())
+  const [editingWorkshopId, setEditingWorkshopId] = useState(null)
+  const [savingWorkshop, setSavingWorkshop] = useState(false)
   const [isUploadingSessionMaterial, setIsUploadingSessionMaterial] = useState(false)
   const [taskForm, setTaskForm] = useState({
     task_template_id: '',
@@ -221,15 +244,23 @@ function App() {
     const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    const requestedMethod = String(fetchOptions.method || 'GET').toUpperCase()
+    const overrideMethod = ['PUT', 'PATCH', 'DELETE'].includes(requestedMethod) ? requestedMethod : null
+    const requestMethod = overrideMethod ? 'POST' : requestedMethod
+    const requestPath = overrideMethod
+      ? `${path}${path.includes('?') ? '&' : '?'}_method=${overrideMethod}`
+      : path
 
     let response
     try {
-      response = await fetch(`${apiBaseUrl}${path}`, {
+      response = await fetch(`${apiBaseUrl}${requestPath}`, {
         ...fetchOptions,
+        method: requestMethod,
         signal: controller.signal,
         headers: {
           Accept: 'application/json',
           ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+          ...(overrideMethod ? { 'X-HTTP-Method-Override': overrideMethod } : {}),
           ...(sendAuth ? { Authorization: `Bearer ${token}` } : {}),
           ...(optionHeaders || {}),
         },
@@ -426,6 +457,28 @@ function App() {
     }
   }, [api])
 
+  const loadWorkshopCourses = useCallback(async () => {
+    try {
+      const data = await api('/workshop-courses')
+      setWorkshopCourses(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }, [api])
+
+  const loadWorkshops = useCallback(async (courseId) => {
+    if (!courseId) {
+      setWorkshops([])
+      return
+    }
+    try {
+      const data = await api(`/workshops?school_course_id=${courseId}`)
+      setWorkshops(data)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }, [api])
+
   const onTaskTemplateFilterChange = useCallback((field, value) => {
     setTaskTemplateFilters((prev) => ({ ...prev, [field]: value }))
   }, [])
@@ -446,13 +499,14 @@ function App() {
           loadTaskTemplates(),
           loadTaskCategories(),
           loadMediaLibraryItems(),
+          loadWorkshopCourses(),
           loadStudentDiagnoses(),
           loadCurrentUser(),
         ])
       }
     }
     load()
-  }, [token, loadStudents, loadTaskTemplates, loadTaskCategories, loadMediaLibraryItems, loadStudentDiagnoses, loadCurrentUser])
+  }, [token, loadStudents, loadTaskTemplates, loadTaskCategories, loadMediaLibraryItems, loadWorkshopCourses, loadStudentDiagnoses, loadCurrentUser])
 
   useEffect(() => {
     if (!currentUser) {
@@ -736,6 +790,20 @@ function App() {
     loadOverviewStats()
   }, [activeSection, loadOverviewStats, token, students.length])
 
+  useEffect(() => {
+    if (!token || (activeSection !== 'workshops' && activeSection !== 'workshopCourse')) return
+    loadWorkshopCourses()
+  }, [activeSection, loadWorkshopCourses, token])
+
+  useEffect(() => {
+    if (!token || activeSection !== 'workshopCourse') return
+    if (!selectedWorkshopCourse) {
+      setActiveSection('workshops')
+      return
+    }
+    loadWorkshops(selectedWorkshopCourse.id)
+  }, [activeSection, loadWorkshops, selectedWorkshopCourse, setActiveSection, token])
+
   async function onRegister(e) {
     e.preventDefault()
     const name = authForm.name.trim()
@@ -928,6 +996,7 @@ function App() {
       })
       setTemplateForm({
         name: '',
+        objective: '',
         description: '',
         task_category_id: '',
         new_category_name: '',
@@ -952,6 +1021,7 @@ function App() {
     setEditingTemplateId(template.id)
     setTemplateForm({
       name: template.name,
+      objective: template.objective || '',
       description: template.description || '',
       task_category_id: template.task_category_id ? String(template.task_category_id) : '',
       new_category_name: '',
@@ -998,6 +1068,7 @@ function App() {
         method: 'PUT',
         body: JSON.stringify({
           name: template.name,
+          objective: template.objective || '',
           description: template.description || '',
           task_category_id: template.task_category_id || null,
           is_favorite: !template.is_favorite,
@@ -1071,10 +1142,10 @@ function App() {
     return errors
   }
 
-  async function onSaveStudent(e) {
+    async function onSaveStudent(e) {
     e.preventDefault()
     const path = editingId ? `/students/${editingId}` : '/students'
-    const method = editingId ? 'PUT' : 'POST'
+    const method = 'POST'
     const isCreating = !editingId
 
     const errors = validateStudentForm(studentForm)
@@ -1093,13 +1164,14 @@ function App() {
         .filter((id) => Number.isFinite(id) && id > 0)
 
       const newDiagnosisName = (studentForm.new_diagnosis_name || '').trim()
+      let createdDiagnosis = null
       if (newDiagnosisName) {
-        const created = await api('/student-diagnoses', {
+        createdDiagnosis = await api('/student-diagnoses', {
           method: 'POST',
           body: JSON.stringify({ name: newDiagnosisName }),
         })
-        if (created?.id && !diagnosisIds.includes(created.id)) {
-          diagnosisIds.push(created.id)
+        if (createdDiagnosis?.id && !diagnosisIds.includes(createdDiagnosis.id)) {
+          diagnosisIds.push(createdDiagnosis.id)
         }
       }
 
@@ -1110,17 +1182,29 @@ function App() {
         return
       }
 
+      const diagnosisLabel = diagnosisIds
+        .map((id) => {
+          if (createdDiagnosis && Number(createdDiagnosis.id) === Number(id)) {
+            return createdDiagnosis.name
+          }
+          return studentDiagnoses.find((d) => Number(d.id) === Number(id))?.name
+        })
+        .filter(Boolean)
+        .join('; ')
+
       const rut = formatRut(studentForm.rut)
       const payload = {
-        full_name: studentForm.full_name.trim(),
+        full_name: (studentForm.full_name || '').trim(),
         rut,
         birth_date: studentForm.birth_date,
         diagnosis_ids: diagnosisIds,
+        student_diagnosis_id: diagnosisIds[0],
+        current_diagnosis: diagnosisLabel,
         school_level_id: Number(studentForm.school_level_id),
         school_course_id: Number(studentForm.school_course_id),
-        guardian_name: studentForm.guardian_name.trim(),
-        guardian_phone: studentForm.guardian_phone.trim(),
-        guardian_email: studentForm.guardian_email.trim(),
+        guardian_name: (studentForm.guardian_name || '').trim(),
+        guardian_phone: (studentForm.guardian_phone || '').trim(),
+        guardian_email: (studentForm.guardian_email || '').trim(),
       }
 
       const savedStudent = await api(path, { method, body: JSON.stringify(payload) })
@@ -1138,8 +1222,12 @@ function App() {
         'success',
       )
     } catch (error) {
-      setStatus(error.message)
-      notifyUser(error.message || 'No se pudo registrar el estudiante.', 'error')
+      const message = error.message || 'No se pudo registrar el estudiante.'
+      if (/rut/i.test(message)) {
+        setStudentFormErrors((prev) => ({ ...prev, rut: 'El RUT no es válido.' }))
+      }
+      setStatus(message)
+      notifyUser(/rut/i.test(message) ? 'El RUT no es válido.' : message, 'error')
     } finally {
       setIsSavingStudent(false)
     }
@@ -1551,6 +1639,133 @@ function App() {
     } catch (error) {
       setStatus(error.message)
     }
+  }
+
+  async function onSaveWorkshop(e) {
+    e.preventDefault()
+    if (!workshopForm.name.trim()) {
+      setStatus('El nombre del taller es obligatorio.')
+      return false
+    }
+    if (!workshopForm.school_course_id) {
+      setStatus('Selecciona el curso.')
+      return false
+    }
+    const creatingFromCourseList = !editingWorkshopId && !selectedWorkshopCourse
+    if (creatingFromCourseList) {
+      const existingCourse = workshopCourses.find(
+        (course) => String(course.id) === String(workshopForm.school_course_id),
+      )
+      if (existingCourse) {
+        const count = Number(existingCourse.workshops_count || 0)
+        setStatus(
+          `Este curso ya está en tu listado y cuenta con ${count} ${count === 1 ? 'taller' : 'talleres'}. Entra al curso para registrar otro.`,
+        )
+        return false
+      }
+    }
+    if (!workshopForm.held_on) {
+      setStatus('Selecciona la fecha de realización.')
+      return false
+    }
+
+    const formData = new FormData()
+    formData.append('name', workshopForm.name.trim())
+    formData.append('objective', workshopForm.objective.trim())
+    formData.append('description', workshopForm.description.trim())
+    formData.append('held_on', workshopForm.held_on)
+    formData.append('school_course_id', String(workshopForm.school_course_id))
+    if (workshopForm.file) {
+      formData.append('file', workshopForm.file)
+    }
+
+    try {
+      setSavingWorkshop(true)
+      const path = editingWorkshopId ? `/workshops/${editingWorkshopId}` : '/workshops'
+      await api(path, { method: 'POST', body: formData })
+      setWorkshopForm(emptyWorkshopForm({ held_on: workshopForm.held_on }))
+      setEditingWorkshopId(null)
+      await loadWorkshopCourses()
+      if (selectedWorkshopCourse) {
+        const stillSelected = selectedWorkshopCourse.id === Number(workshopForm.school_course_id)
+          || String(selectedWorkshopCourse.id) === String(workshopForm.school_course_id)
+        if (stillSelected) {
+          await loadWorkshops(selectedWorkshopCourse.id)
+        }
+      }
+      setStatus('Taller guardado')
+      return true
+    } catch (error) {
+      setStatus(error.message)
+      return false
+    } finally {
+      setSavingWorkshop(false)
+    }
+  }
+
+  function onEditWorkshop(workshop) {
+    setEditingWorkshopId(workshop.id)
+    setWorkshopForm({
+      name: workshop.name || '',
+      objective: workshop.objective || '',
+      description: workshop.description || '',
+      held_on: String(workshop.held_on || '').slice(0, 10),
+      school_level_id: String(workshop.course?.school_level_id || selectedWorkshopCourse?.school_level_id || ''),
+      school_course_id: String(workshop.school_course_id || selectedWorkshopCourse?.id || ''),
+      file: null,
+    })
+  }
+
+  async function onDeleteWorkshop(workshopId) {
+    if (!window.confirm('Eliminar este taller y su material adjunto?')) return
+    try {
+      await api(`/workshops/${workshopId}`, { method: 'DELETE' })
+      await loadWorkshopCourses()
+      if (selectedWorkshopCourse) {
+        await loadWorkshops(selectedWorkshopCourse.id)
+      }
+      setStatus('Taller eliminado')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  async function onDownloadWorkshop(workshop) {
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/workshops/${workshop.id}/download`,
+        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
+      )
+      if (!response.ok) throw new Error('No se pudo descargar el material del taller')
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = workshop.stored_name || workshop.original_name || `taller-${workshop.id}`
+      a.click()
+      window.URL.revokeObjectURL(url)
+      setStatus('Material del taller descargado')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  function onOpenWorkshopCourse(course) {
+    setSelectedWorkshopCourse(course)
+    setEditingWorkshopId(null)
+    setWorkshopForm(emptyWorkshopForm({
+      school_level_id: String(course.school_level_id || course.level?.id || ''),
+      school_course_id: String(course.id),
+    }))
+    setActiveSection('workshopCourse')
+  }
+
+  function onBackToWorkshopCourses() {
+    setSelectedWorkshopCourse(null)
+    setWorkshops([])
+    setEditingWorkshopId(null)
+    setWorkshopForm(emptyWorkshopForm())
+    setActiveSection('workshops')
   }
 
   async function onSaveSessionTask(e) {
@@ -2213,18 +2428,6 @@ function App() {
                   </span>
                 </button>
                 <button
-                  className={`sidebarNavItem ${activeSection === 'profile' ? 'sidebarNavItemActive' : ''}`}
-                  onClick={() => setActiveSection('profile')}
-                >
-                  <span className="sidebarNavItemContent">
-                    <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                      <circle cx="12" cy="8" r="4" />
-                      <path d="M4 20c1.8-3.2 5-5 8-5s6.2 1.8 8 5" strokeLinecap="round" />
-                    </svg>
-                    <span>Mi perfil</span>
-                  </span>
-                </button>
-                <button
                   className={`sidebarNavItem ${activeSection === 'students' ? 'sidebarNavItemActive' : ''}`}
                   onClick={() => setActiveSection('students')}
                 >
@@ -2288,6 +2491,21 @@ function App() {
                       <path d="m8 12 2.5 2.5L16 9" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                     <span>Banco de tareas</span>
+                  </span>
+                </button>
+                <button
+                  className={`sidebarNavItem ${activeSection === 'workshops' || activeSection === 'workshopCourse' ? 'sidebarNavItemActive' : ''}`}
+                  onClick={() => {
+                    setSelectedWorkshopCourse(null)
+                    setActiveSection('workshops')
+                  }}
+                >
+                  <span className="sidebarNavItemContent">
+                    <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M4 19V7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" />
+                      <path d="M8 13h8M8 16h5" strokeLinecap="round" />
+                    </svg>
+                    <span>Talleres</span>
                   </span>
                 </button>
                 <button
@@ -2519,6 +2737,38 @@ function App() {
                 taskHistory={taskHistory}
                 formatDisplayDate={formatDisplayDate}
                 ratingOptions={ratingOptions}
+              />
+            )}
+
+            {activeSection === 'workshops' && (
+              <WorkshopsSection
+                workshopCourses={workshopCourses}
+                levels={levels}
+                workshopForm={workshopForm}
+                setWorkshopForm={setWorkshopForm}
+                onSaveWorkshop={onSaveWorkshop}
+                onOpenCourse={onOpenWorkshopCourse}
+                formatDisplayDate={formatDisplayDate}
+                savingWorkshop={savingWorkshop}
+              />
+            )}
+
+            {activeSection === 'workshopCourse' && selectedWorkshopCourse && (
+              <WorkshopCourseSection
+                selectedWorkshopCourse={selectedWorkshopCourse}
+                workshops={workshops}
+                levels={levels}
+                workshopForm={workshopForm}
+                setWorkshopForm={setWorkshopForm}
+                editingWorkshopId={editingWorkshopId}
+                setEditingWorkshopId={setEditingWorkshopId}
+                onBackToCourses={onBackToWorkshopCourses}
+                onSaveWorkshop={onSaveWorkshop}
+                onEditWorkshop={onEditWorkshop}
+                onDeleteWorkshop={onDeleteWorkshop}
+                onDownloadWorkshop={onDownloadWorkshop}
+                formatDisplayDate={formatDisplayDate}
+                savingWorkshop={savingWorkshop}
               />
             )}
 

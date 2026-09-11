@@ -15,6 +15,7 @@ class TaskTemplate extends Model
         'user_id',
         'task_category_id',
         'name',
+        'objective',
         'description',
         'category',
         'is_favorite',

@@ -13,6 +13,7 @@ use App\Http\Controllers\TaskCategoryController;
 use App\Http\Controllers\TaskTemplateController;
 use App\Http\Controllers\TherapySessionController;
 use App\Http\Controllers\TreatmentPlanController;
+use App\Http\Controllers\WorkshopController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', function () {
@@ -36,6 +37,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::put('/auth/me', [AuthController::class, 'updateMe']);
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::apiResource('/students', StudentController::class);
+    Route::post('/students/{student}', [StudentController::class, 'update']);
     Route::get('/professionals', [StudentAssignmentController::class, 'professionals']);
     Route::get('/students/{student}/assignments', [StudentAssignmentController::class, 'index']);
     Route::post('/students/{student}/assignments', [StudentAssignmentController::class, 'store']);
@@ -76,4 +78,11 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/materials', [SessionMaterialController::class, 'store']);
     Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/materials/{material}/download', [SessionMaterialController::class, 'download']);
     Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/materials/{material}', [SessionMaterialController::class, 'destroy']);
+    Route::get('/workshop-courses', [WorkshopController::class, 'courses']);
+    Route::get('/workshops', [WorkshopController::class, 'index']);
+    Route::post('/workshops', [WorkshopController::class, 'store']);
+    Route::get('/workshops/{workshop}/download', [WorkshopController::class, 'download']);
+    Route::put('/workshops/{workshop}', [WorkshopController::class, 'update']);
+    Route::post('/workshops/{workshop}', [WorkshopController::class, 'update']);
+    Route::delete('/workshops/{workshop}', [WorkshopController::class, 'destroy']);
 });

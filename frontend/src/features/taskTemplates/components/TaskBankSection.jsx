@@ -33,6 +33,7 @@ export default function TaskBankSection({
     setEditingTemplateId(null)
     setTemplateForm({
       name: '',
+      objective: '',
       description: '',
       category: '',
       task_category_id: '',
@@ -53,6 +54,7 @@ export default function TaskBankSection({
     setEditingTemplateId(null)
     setTemplateForm({
       name: '',
+      objective: '',
       description: '',
       category: '',
       task_category_id: '',
@@ -209,7 +211,8 @@ export default function TaskBankSection({
           <thead className="bg-slate-50">
             <tr>
               <th className="px-3 py-3 text-left font-semibold text-slate-600">Nombre</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Descripcion</th>
+              <th className="px-3 py-3 text-left font-semibold text-slate-600">Objetivo</th>
+              <th className="px-3 py-3 text-left font-semibold text-slate-600">Descripción</th>
               <th className="px-3 py-3 text-left font-semibold text-slate-600">Categoria</th>
               <th className="px-3 py-3 text-left font-semibold text-slate-600">Creada</th>
               <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
@@ -243,7 +246,8 @@ export default function TaskBankSection({
                     </span>
                   </div>
                 </td>
-                <td className="px-3 py-3 text-slate-700">{template.description || 'Sin descripcion'}</td>
+                <td className="px-3 py-3 text-slate-700">{template.objective || 'Sin objetivo'}</td>
+                <td className="px-3 py-3 text-slate-700">{template.description || 'Sin descripción'}</td>
                 <td className="px-3 py-3 text-slate-700">{template.category_ref?.name || '-'}</td>
                 <td className="px-3 py-3 text-slate-700">{formatTemplateDate(template.created_at)}</td>
                 <td className="px-3 py-3">
@@ -265,7 +269,7 @@ export default function TaskBankSection({
             ))}
             {taskTemplates.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
                   No hay tareas para los filtros seleccionados.
                 </td>
               </tr>
@@ -341,13 +345,26 @@ export default function TaskBankSection({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="template-description">
-                    Descripcion
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="template-objective">
+                    Objetivo
                   </label>
                   <input
-                    id="template-description"
+                    id="template-objective"
                     className="fieldInput mb-0"
-                    placeholder="Descripcion de tarea"
+                    placeholder="Objetivo de la tarea"
+                    value={templateForm.objective || ''}
+                    onChange={(e) => setTemplateForm({ ...templateForm, objective: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="template-description">
+                    Descripción
+                  </label>
+                  <textarea
+                    id="template-description"
+                    className="fieldInput mb-0 min-h-24"
+                    rows={4}
+                    placeholder="Descripción de la tarea"
                     value={templateForm.description}
                     onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
                   />
@@ -402,7 +419,7 @@ export default function TaskBankSection({
                       checked={Boolean(templateForm.apply_to_pending_sessions)}
                       onChange={(e) => setTemplateForm({ ...templateForm, apply_to_pending_sessions: e.target.checked })}
                     />
-                    <span>Aplicar cambios de nombre y descripción a sesiones pendientes vinculadas.</span>
+                    <span>Aplicar cambios de nombre, objetivo y descripción a sesiones pendientes vinculadas.</span>
                   </label>
                 )}
               </div>

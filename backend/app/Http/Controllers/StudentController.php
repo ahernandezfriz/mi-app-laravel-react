@@ -7,9 +7,12 @@ use App\Models\Student;
 use App\Models\StudentDiagnosis;
 use App\Rules\ChileanRutRule;
 use App\Support\ChileanRut;
+use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -36,45 +39,20 @@ class StudentController extends Controller
         ]);
 
         $minBirthDate = now()->subYears(25)->toDateString();
-        $rutRules = ['required', 'string', 'max:20', new ChileanRutRule];
-        if (! ChileanRut::isWildcard($request->input('rut'))) {
-            $rutRules[] = Rule::unique('students', 'rut');
-        }
+        $rutRules = $this->rutValidationRules();
 
-        $validated = $request->validate([
-            'full_name' => ['required', 'string', 'max:255'],
-            'rut' => $rutRules,
-            'birth_date' => ['required', 'date', 'before_or_equal:today', 'after_or_equal:'.$minBirthDate],
-            'diagnosis_ids' => ['required', 'array', 'min:1'],
-            'diagnosis_ids.*' => [
-                'integer',
-                Rule::exists('student_diagnoses', 'id')->where('user_id', $request->user()->id),
-            ],
-            'school_level_id' => ['required', 'integer', 'exists:school_levels,id'],
-            'school_course_id' => ['required', 'integer', 'exists:school_courses,id'],
-            'guardian_name' => ['required', 'string', 'max:255'],
-            'guardian_phone' => ['required', 'string', 'max:50'],
-            'guardian_email' => ['required', 'email', 'max:255'],
-        ]);
+        $validated = $request->validate(
+            $this->studentPayloadRules($rutRules, $minBirthDate),
+            $this->studentValidationMessages(),
+        );
 
         $this->ensureCourseBelongsToLevel($validated['school_course_id'], $validated['school_level_id']);
         $diagnosisPayload = $this->resolveDiagnoses($validated['diagnosis_ids'], $request->user()->id);
 
-        $student = DB::transaction(function () use ($validated, $diagnosisPayload, $request) {
-            $student = Student::create([
-                'full_name' => $validated['full_name'],
-                'rut' => $validated['rut'],
-                'birth_date' => $validated['birth_date'],
-                'student_diagnosis_id' => $diagnosisPayload['primary_id'],
-                'current_diagnosis' => $diagnosisPayload['label'],
-                'school_level_id' => $validated['school_level_id'],
-                'school_course_id' => $validated['school_course_id'],
-                'guardian_name' => $validated['guardian_name'],
-                'guardian_phone' => $validated['guardian_phone'],
-                'guardian_email' => $validated['guardian_email'],
-            ]);
+        $student = $this->persistStudent(function () use ($validated, $diagnosisPayload, $request) {
+            $student = Student::create($this->studentAttributes($validated, $diagnosisPayload));
 
-            $student->diagnoses()->sync($diagnosisPayload['ids']);
+            $this->syncStudentDiagnoses($student, $diagnosisPayload['ids']);
             $student->professionals()->syncWithoutDetaching([$request->user()->id]);
 
             return $student;
@@ -103,45 +81,39 @@ class StudentController extends Controller
         ]);
 
         $minBirthDate = now()->subYears(25)->toDateString();
-        $rutRules = ['required', 'string', 'max:20', new ChileanRutRule];
-        if (! ChileanRut::isWildcard($request->input('rut'))) {
-            $rutRules[] = Rule::unique('students', 'rut')->ignore($student->id);
-        }
+        $rutRules = $this->rutValidationRules($student->id);
 
-        $validated = $request->validate([
-            'full_name' => ['required', 'string', 'max:255'],
-            'rut' => $rutRules,
-            'birth_date' => ['required', 'date', 'before_or_equal:today', 'after_or_equal:'.$minBirthDate],
-            'diagnosis_ids' => ['required', 'array', 'min:1'],
-            'diagnosis_ids.*' => [
-                'integer',
-                Rule::exists('student_diagnoses', 'id')->where('user_id', $request->user()->id),
-            ],
-            'school_level_id' => ['required', 'integer', 'exists:school_levels,id'],
-            'school_course_id' => ['required', 'integer', 'exists:school_courses,id'],
-            'guardian_name' => ['required', 'string', 'max:255'],
-            'guardian_phone' => ['required', 'string', 'max:50'],
-            'guardian_email' => ['required', 'email', 'max:255'],
-        ]);
+        $attachedDiagnosisIds = $this->attachedDiagnosisIds($student);
+
+        $validated = $request->validate(
+            array_merge(
+                $this->studentPayloadRules($rutRules, $minBirthDate, false),
+                [
+                    'diagnosis_ids.*' => [
+                        'integer',
+                        function (string $attribute, mixed $value, \Closure $fail) use ($request, $attachedDiagnosisIds): void {
+                            if (! $this->diagnosisIsAllowed((int) $value, $request->user()->id, $attachedDiagnosisIds)) {
+                                $fail('Uno o más diagnósticos no son válidos.');
+                            }
+                        },
+                    ],
+                ],
+            ),
+            $this->studentValidationMessages(),
+        );
 
         $this->ensureCourseBelongsToLevel($validated['school_course_id'], $validated['school_level_id']);
-        $diagnosisPayload = $this->resolveDiagnoses($validated['diagnosis_ids'], $request->user()->id);
+        $diagnosisPayload = $this->resolveDiagnoses(
+            $validated['diagnosis_ids'],
+            $request->user()->id,
+            $attachedDiagnosisIds,
+        );
 
-        DB::transaction(function () use ($student, $validated, $diagnosisPayload): void {
-            $student->update([
-                'full_name' => $validated['full_name'],
-                'rut' => $validated['rut'],
-                'birth_date' => $validated['birth_date'],
-                'student_diagnosis_id' => $diagnosisPayload['primary_id'],
-                'current_diagnosis' => $diagnosisPayload['label'],
-                'school_level_id' => $validated['school_level_id'],
-                'school_course_id' => $validated['school_course_id'],
-                'guardian_name' => $validated['guardian_name'],
-                'guardian_phone' => $validated['guardian_phone'],
-                'guardian_email' => $validated['guardian_email'],
-            ]);
+        $this->persistStudent(function () use ($student, $validated, $diagnosisPayload) {
+            $student->update($this->studentAttributes($validated, $diagnosisPayload));
+            $this->syncStudentDiagnoses($student, $diagnosisPayload['ids']);
 
-            $student->diagnoses()->sync($diagnosisPayload['ids']);
+            return $student;
         });
 
         return response()->json($student->fresh()->load($this->studentRelations()));
@@ -160,13 +132,156 @@ class StudentController extends Controller
      */
     private function studentRelations(): array
     {
-        return [
+        $relations = [
             'level',
             'course',
-            'diagnoses:id,name',
             'studentDiagnosis:id,name',
             'professionals:id,name',
         ];
+
+        if (Schema::hasTable('student_student_diagnosis') && method_exists(Student::class, 'diagnoses')) {
+            $relations[] = 'diagnoses:id,name';
+        }
+
+        return $relations;
+    }
+
+    /**
+     * @return list<mixed>
+     */
+    private function rutValidationRules(?int $ignoreStudentId = null): array
+    {
+        $unique = Rule::unique('students', 'rut');
+        if ($ignoreStudentId !== null) {
+            $unique = $unique->ignore($ignoreStudentId);
+        }
+
+        return ['required', 'string', 'max:20', new ChileanRutRule, $unique];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function studentValidationMessages(): array
+    {
+        return [
+            'rut.unique' => 'El RUT no es válido.',
+        ];
+    }
+
+    /**
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    private function persistStudent(callable $callback): mixed
+    {
+        try {
+            return DB::transaction($callback);
+        } catch (UniqueConstraintViolationException $e) {
+            $this->throwIfDuplicateStudentRut($e);
+            throw $e;
+        } catch (QueryException $e) {
+            $this->throwIfDuplicateStudentRut($e);
+            throw $e;
+        }
+    }
+
+    private function throwIfDuplicateStudentRut(\Throwable $e): void
+    {
+        $message = $e->getMessage();
+        if (
+            ! str_contains($message, 'students_rut_unique')
+            && ! str_contains($message, "for key 'students.rut'")
+            && ! str_contains($message, 'students_rut')
+        ) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'rut' => 'El RUT no es válido.',
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function studentPayloadRules(array $rutRules, string $minBirthDate, bool $ownedDiagnoses = true): array
+    {
+        $rules = [
+            'full_name' => ['required', 'string', 'max:255'],
+            'rut' => $rutRules,
+            'birth_date' => Schema::hasColumn('students', 'birth_date')
+                ? ['required', 'date', 'before_or_equal:today', 'after_or_equal:'.$minBirthDate]
+                : ['nullable'],
+            'diagnosis_ids' => ['required', 'array', 'min:1'],
+            'school_level_id' => ['required', 'integer', 'exists:school_levels,id'],
+            'school_course_id' => ['required', 'integer', 'exists:school_courses,id'],
+            'guardian_name' => ['required', 'string', 'max:255'],
+            'guardian_phone' => ['required', 'string', 'max:50'],
+            'guardian_email' => ['required', 'email', 'max:255'],
+        ];
+
+        if ($ownedDiagnoses) {
+            $rules['diagnosis_ids.*'] = [
+                'integer',
+                Rule::exists('student_diagnoses', 'id')->where('user_id', request()->user()->id),
+            ];
+        } else {
+            $rules['diagnosis_ids.*'] = ['integer'];
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @param  array{ids: list<int>, primary_id: int, label: string}  $diagnosisPayload
+     * @return array<string, mixed>
+     */
+    private function studentAttributes(array $validated, array $diagnosisPayload): array
+    {
+        $attributes = [
+            'full_name' => $validated['full_name'],
+            'rut' => $validated['rut'],
+            'student_diagnosis_id' => $diagnosisPayload['primary_id'],
+            'current_diagnosis' => $diagnosisPayload['label'],
+            'school_level_id' => $validated['school_level_id'],
+            'school_course_id' => $validated['school_course_id'],
+            'guardian_name' => $validated['guardian_name'],
+            'guardian_phone' => $validated['guardian_phone'],
+            'guardian_email' => $validated['guardian_email'],
+        ];
+
+        if (Schema::hasColumn('students', 'birth_date')) {
+            $attributes['birth_date'] = $validated['birth_date'] ?? null;
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * @param  list<int>  $ids
+     */
+    private function syncStudentDiagnoses(Student $student, array $ids): void
+    {
+        if (! method_exists($student, 'diagnoses') || ! Schema::hasTable('student_student_diagnosis')) {
+            return;
+        }
+
+        $student->diagnoses()->sync($ids);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function attachedDiagnosisIds(Student $student): array
+    {
+        if (method_exists($student, 'diagnoses') && Schema::hasTable('student_student_diagnosis')) {
+            return $student->diagnoses()->pluck('student_diagnoses.id')->map(fn ($id) => (int) $id)->all();
+        }
+
+        return $student->student_diagnosis_id ? [(int) $student->student_diagnosis_id] : [];
     }
 
     /**
@@ -191,9 +306,10 @@ class StudentController extends Controller
 
     /**
      * @param  list<int>  $ids
+     * @param  list<int>  $allowedExtraIds
      * @return array{ids: list<int>, primary_id: int, label: string}
      */
-    private function resolveDiagnoses(array $ids, int $userId): array
+    private function resolveDiagnoses(array $ids, int $userId, array $allowedExtraIds = []): array
     {
         $uniqueIds = collect($ids)->map(fn ($id) => (int) $id)->unique()->values();
 
@@ -204,8 +320,13 @@ class StudentController extends Controller
         }
 
         $diagnoses = StudentDiagnosis::query()
-            ->where('user_id', $userId)
             ->whereIn('id', $uniqueIds->all())
+            ->where(function ($query) use ($userId, $allowedExtraIds): void {
+                $query->where('user_id', $userId);
+                if ($allowedExtraIds !== []) {
+                    $query->orWhereIn('id', $allowedExtraIds);
+                }
+            })
             ->get()
             ->keyBy('id');
 
@@ -226,6 +347,21 @@ class StudentController extends Controller
             'primary_id' => $orderedIds[0],
             'label' => $label,
         ];
+    }
+
+    /**
+     * @param  list<int>  $attachedDiagnosisIds
+     */
+    private function diagnosisIsAllowed(int $diagnosisId, int $userId, array $attachedDiagnosisIds = []): bool
+    {
+        if (in_array($diagnosisId, $attachedDiagnosisIds, true)) {
+            return true;
+        }
+
+        return StudentDiagnosis::query()
+            ->whereKey($diagnosisId)
+            ->where('user_id', $userId)
+            ->exists();
     }
 
     private function authorizeStudent(Request $request, Student $student): void
