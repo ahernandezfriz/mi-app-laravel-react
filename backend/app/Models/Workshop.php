@@ -13,9 +13,11 @@ class Workshop extends Model
     protected $fillable = [
         'user_id',
         'school_course_id',
+        'media_library_item_id',
         'name',
         'objective',
         'description',
+        'urls',
         'held_on',
         'original_name',
         'stored_name',
@@ -36,13 +38,14 @@ class Workshop extends Model
     {
         return [
             'held_on' => 'date:Y-m-d',
+            'urls' => 'array',
             'size_bytes' => 'integer',
         ];
     }
 
     public function getHasMaterialAttribute(): bool
     {
-        return filled($this->storage_path);
+        return filled($this->media_library_item_id) || filled($this->storage_path);
     }
 
     public function user(): BelongsTo
@@ -53,5 +56,10 @@ class Workshop extends Model
     public function course(): BelongsTo
     {
         return $this->belongsTo(SchoolCourse::class, 'school_course_id');
+    }
+
+    public function mediaItem(): BelongsTo
+    {
+        return $this->belongsTo(MediaLibraryItem::class, 'media_library_item_id');
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\MediaLibraryItem;
+use App\Models\Workshop;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -13,7 +14,10 @@ class MediaLibraryController extends Controller
     public function index(Request $request): JsonResponse
     {
         return response()->json(
-            $request->user()->mediaLibraryItems()->withCount('sessionMaterials')->orderByDesc('id')->get()
+            $request->user()->mediaLibraryItems()
+                ->withCount(['sessionMaterials', 'workshops'])
+                ->orderByDesc('id')
+                ->get()
         );
     }
 
@@ -42,7 +46,7 @@ class MediaLibraryController extends Controller
             'size_bytes' => $file->getSize() ?: 0,
         ]);
 
-        return response()->json($item->loadCount('sessionMaterials'), 201);
+        return response()->json($item->loadCount(['sessionMaterials', 'workshops']), 201);
     }
 
     public function download(Request $request, MediaLibraryItem $item): StreamedResponse
@@ -56,6 +60,15 @@ class MediaLibraryController extends Controller
     public function destroy(Request $request, MediaLibraryItem $item): JsonResponse
     {
         abort_unless($item->user_id === $request->user()->id, 403, 'No autorizado para este recurso.');
+
+        Workshop::query()->where('media_library_item_id', $item->id)->update([
+            'media_library_item_id' => null,
+            'original_name' => null,
+            'stored_name' => null,
+            'storage_path' => null,
+            'mime_type' => null,
+            'size_bytes' => null,
+        ]);
 
         if (Storage::disk('public')->exists($item->storage_path)) {
             Storage::disk('public')->delete($item->storage_path);

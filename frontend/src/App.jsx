@@ -4,6 +4,7 @@ import AppRouter from './app/router/AppRouter'
 import TaskBankSection from './features/taskTemplates/components/TaskBankSection'
 import WorkshopsSection from './features/workshops/components/WorkshopsSection'
 import WorkshopCourseSection from './features/workshops/components/WorkshopCourseSection'
+import WorkshopDetailSection from './features/workshops/components/WorkshopDetailSection'
 import FeedbackMessage from './shared/components/FeedbackMessage'
 import StudentContextCard from './shared/components/StudentContextCard'
 import SessionContextCard from './shared/components/SessionContextCard'
@@ -27,6 +28,21 @@ const apiBaseUrl = import.meta.env.VITE_API_URL
   || (import.meta.env.DEV ? 'http://localhost:8080/api' : '/api')
 const PAGE_SIZE = 10
 
+const WORKSHOP_FILE_MAX_BYTES = 10 * 1024 * 1024
+const WORKSHOP_FILE_EXTENSIONS = ['pdf', 'ppt', 'pptx', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp', 'gif']
+
+function getWorkshopFileError(file) {
+  if (!file) return ''
+  const extension = String(file.name || '').split('.').pop()?.toLowerCase()
+  if (!WORKSHOP_FILE_EXTENSIONS.includes(extension)) {
+    return 'El archivo debe ser un documento o imagen (PDF, PPT, Word, Excel o imagen).'
+  }
+  if (file.size > WORKSHOP_FILE_MAX_BYTES) {
+    return 'El archivo no puede superar 10 MB.'
+  }
+  return ''
+}
+
 function emptyWorkshopForm(overrides = {}) {
   return {
     name: '',
@@ -36,6 +52,9 @@ function emptyWorkshopForm(overrides = {}) {
     school_level_id: '',
     school_course_id: '',
     file: null,
+    media_library_item_id: '',
+    urls: [],
+    fromExistingCourse: false,
     ...overrides,
   }
 }
@@ -69,7 +88,7 @@ function normalizeSessionTime(value) {
   const match = String(value).trim().match(/^(\d{2}):(\d{2})/)
   return match ? `${match[1]}:${match[2]}` : '09:00'
 }
-const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary', 'workshops', 'workshopCourse'])
+const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary', 'workshops', 'workshopCourse', 'workshopDetail'])
 const APP_BASE = '/app'
 
 function getSectionFromPath(pathname) {
@@ -193,6 +212,7 @@ function App() {
   const [workshopCourses, setWorkshopCourses] = useState([])
   const [workshops, setWorkshops] = useState([])
   const [selectedWorkshopCourse, setSelectedWorkshopCourse] = useState(null)
+  const [selectedWorkshop, setSelectedWorkshop] = useState(null)
   const [workshopForm, setWorkshopForm] = useState(() => emptyWorkshopForm())
   const [editingWorkshopId, setEditingWorkshopId] = useState(null)
   const [savingWorkshop, setSavingWorkshop] = useState(false)
@@ -791,18 +811,25 @@ function App() {
   }, [activeSection, loadOverviewStats, token, students.length])
 
   useEffect(() => {
-    if (!token || (activeSection !== 'workshops' && activeSection !== 'workshopCourse')) return
+    if (!token || !['workshops', 'workshopCourse', 'workshopDetail'].includes(activeSection)) return
     loadWorkshopCourses()
   }, [activeSection, loadWorkshopCourses, token])
 
   useEffect(() => {
-    if (!token || activeSection !== 'workshopCourse') return
+    if (!token || (activeSection !== 'workshopCourse' && activeSection !== 'workshopDetail')) return
     if (!selectedWorkshopCourse) {
       setActiveSection('workshops')
       return
     }
     loadWorkshops(selectedWorkshopCourse.id)
   }, [activeSection, loadWorkshops, selectedWorkshopCourse, setActiveSection, token])
+
+  useEffect(() => {
+    if (!token || activeSection !== 'workshopDetail') return
+    if (!selectedWorkshop) {
+      setActiveSection(selectedWorkshopCourse ? 'workshopCourse' : 'workshops')
+    }
+  }, [activeSection, selectedWorkshop, selectedWorkshopCourse, setActiveSection, token])
 
   async function onRegister(e) {
     e.preventDefault()
@@ -1608,14 +1635,18 @@ function App() {
 
   async function onDeleteMediaLibraryItem(item) {
     const confirmation = window.confirm(
-      `Eliminar "${item.stored_name}" de la biblioteca?\n\nAdvertencia: se eliminará en todas las sesiones donde esté vinculado.`,
+      `Eliminar "${item.stored_name}" de la biblioteca?\n\nAdvertencia: se quitará de las sesiones y talleres donde esté vinculado.`,
     )
     if (!confirmation) return
 
     try {
       await api(`/media-library/${item.id}`, { method: 'DELETE' })
-      await Promise.all([loadMediaLibraryItems(), selectedSession ? onSelectSession(selectedSession) : Promise.resolve()])
-      setStatus('Recurso eliminado de biblioteca y sesiones vinculadas')
+      await Promise.all([
+        loadMediaLibraryItems(),
+        selectedSession ? onSelectSession(selectedSession) : Promise.resolve(),
+        selectedWorkshopCourse ? loadWorkshops(selectedWorkshopCourse.id) : Promise.resolve(),
+      ])
+      setStatus('Recurso eliminado de la biblioteca y de los vínculos en sesiones y talleres')
     } catch (error) {
       setStatus(error.message)
     }
@@ -1651,7 +1682,7 @@ function App() {
       setStatus('Selecciona el curso.')
       return false
     }
-    const creatingFromCourseList = !editingWorkshopId && !selectedWorkshopCourse
+    const creatingFromCourseList = !editingWorkshopId && !selectedWorkshopCourse && !workshopForm.fromExistingCourse
     if (creatingFromCourseList) {
       const existingCourse = workshopCourses.find(
         (course) => String(course.id) === String(workshopForm.school_course_id),
@@ -1675,23 +1706,36 @@ function App() {
     formData.append('description', workshopForm.description.trim())
     formData.append('held_on', workshopForm.held_on)
     formData.append('school_course_id', String(workshopForm.school_course_id))
-    if (workshopForm.file) {
+    if (workshopForm.media_library_item_id) {
+      formData.append('media_library_item_id', String(workshopForm.media_library_item_id))
+    } else if (workshopForm.file) {
+      const fileError = getWorkshopFileError(workshopForm.file)
+      if (fileError) {
+        setStatus(fileError)
+        return false
+      }
       formData.append('file', workshopForm.file)
     }
+    formData.append('urls', JSON.stringify(
+      (workshopForm.urls || []).map((url) => String(url).trim()).filter(Boolean),
+    ))
 
     try {
       setSavingWorkshop(true)
       const path = editingWorkshopId ? `/workshops/${editingWorkshopId}` : '/workshops'
-      await api(path, { method: 'POST', body: formData })
+      const savedWorkshop = await api(path, { method: 'POST', body: formData })
       setWorkshopForm(emptyWorkshopForm({ held_on: workshopForm.held_on }))
       setEditingWorkshopId(null)
-      await loadWorkshopCourses()
+      await Promise.all([loadWorkshopCourses(), loadMediaLibraryItems()])
       if (selectedWorkshopCourse) {
         const stillSelected = selectedWorkshopCourse.id === Number(workshopForm.school_course_id)
           || String(selectedWorkshopCourse.id) === String(workshopForm.school_course_id)
         if (stillSelected) {
           await loadWorkshops(selectedWorkshopCourse.id)
         }
+      }
+      if (savedWorkshop && selectedWorkshop && Number(savedWorkshop.id) === Number(selectedWorkshop.id)) {
+        setSelectedWorkshop(savedWorkshop)
       }
       setStatus('Taller guardado')
       return true
@@ -1713,20 +1757,28 @@ function App() {
       school_level_id: String(workshop.course?.school_level_id || selectedWorkshopCourse?.school_level_id || ''),
       school_course_id: String(workshop.school_course_id || selectedWorkshopCourse?.id || ''),
       file: null,
+      media_library_item_id: workshop.media_library_item_id ? String(workshop.media_library_item_id) : '',
+      urls: Array.isArray(workshop.urls) ? workshop.urls : [],
+      fromExistingCourse: true,
     })
   }
 
   async function onDeleteWorkshop(workshopId) {
-    if (!window.confirm('Eliminar este taller y su material adjunto?')) return
+    if (!window.confirm('Eliminar este taller? El archivo permanecerá en la biblioteca de medios.')) return false
     try {
       await api(`/workshops/${workshopId}`, { method: 'DELETE' })
-      await loadWorkshopCourses()
+      await Promise.all([loadWorkshopCourses(), loadMediaLibraryItems()])
       if (selectedWorkshopCourse) {
         await loadWorkshops(selectedWorkshopCourse.id)
       }
+      if (selectedWorkshop && Number(selectedWorkshop.id) === Number(workshopId)) {
+        setSelectedWorkshop(null)
+      }
       setStatus('Taller eliminado')
+      return true
     } catch (error) {
       setStatus(error.message)
+      return false
     }
   }
 
@@ -1762,10 +1814,27 @@ function App() {
 
   function onBackToWorkshopCourses() {
     setSelectedWorkshopCourse(null)
+    setSelectedWorkshop(null)
     setWorkshops([])
     setEditingWorkshopId(null)
     setWorkshopForm(emptyWorkshopForm())
     setActiveSection('workshops')
+  }
+
+  async function onOpenWorkshopDetail(workshop) {
+    setSelectedWorkshop(workshop)
+    setActiveSection('workshopDetail')
+    try {
+      const fresh = await api(`/workshops/${workshop.id}`)
+      setSelectedWorkshop(fresh)
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  function onBackToWorkshopCourse() {
+    setSelectedWorkshop(null)
+    setActiveSection('workshopCourse')
   }
 
   async function onSaveSessionTask(e) {
@@ -2494,9 +2563,10 @@ function App() {
                   </span>
                 </button>
                 <button
-                  className={`sidebarNavItem ${activeSection === 'workshops' || activeSection === 'workshopCourse' ? 'sidebarNavItemActive' : ''}`}
+                  className={`sidebarNavItem ${['workshops', 'workshopCourse', 'workshopDetail'].includes(activeSection) ? 'sidebarNavItemActive' : ''}`}
                   onClick={() => {
                     setSelectedWorkshopCourse(null)
+                    setSelectedWorkshop(null)
                     setActiveSection('workshops')
                   }}
                 >
@@ -2750,6 +2820,7 @@ function App() {
                 onOpenCourse={onOpenWorkshopCourse}
                 formatDisplayDate={formatDisplayDate}
                 savingWorkshop={savingWorkshop}
+                mediaLibraryItems={mediaLibraryItems}
               />
             )}
 
@@ -2766,9 +2837,29 @@ function App() {
                 onSaveWorkshop={onSaveWorkshop}
                 onEditWorkshop={onEditWorkshop}
                 onDeleteWorkshop={onDeleteWorkshop}
-                onDownloadWorkshop={onDownloadWorkshop}
+                onViewWorkshop={onOpenWorkshopDetail}
                 formatDisplayDate={formatDisplayDate}
                 savingWorkshop={savingWorkshop}
+                mediaLibraryItems={mediaLibraryItems}
+              />
+            )}
+
+            {activeSection === 'workshopDetail' && selectedWorkshop && (
+              <WorkshopDetailSection
+                workshop={selectedWorkshop}
+                formatDisplayDate={formatDisplayDate}
+                onBack={onBackToWorkshopCourse}
+                onEditWorkshop={onEditWorkshop}
+                onDeleteWorkshop={onDeleteWorkshop}
+                onDownloadWorkshop={onDownloadWorkshop}
+                workshopForm={workshopForm}
+                setWorkshopForm={setWorkshopForm}
+                levels={levels}
+                editingWorkshopId={editingWorkshopId}
+                setEditingWorkshopId={setEditingWorkshopId}
+                onSaveWorkshop={onSaveWorkshop}
+                savingWorkshop={savingWorkshop}
+                mediaLibraryItems={mediaLibraryItems}
               />
             )}
 
@@ -2778,7 +2869,7 @@ function App() {
                   <div>
                     <h2 className="sectionTitle mb-0">Biblioteca de medios</h2>
                     <p className="mt-1 text-sm text-slate-500">
-                      Reutiliza recursos sin volver a subirlos en cada sesión.
+                      Reutiliza recursos en sesiones y talleres sin volver a subirlos.
                     </p>
                   </div>
                 </div>
@@ -2807,7 +2898,7 @@ function App() {
                         <th className="px-3 py-2 text-left font-semibold text-slate-600">Vista previa</th>
                         <th className="px-3 py-2 text-left font-semibold text-slate-600">Título</th>
                         <th className="px-3 py-2 text-left font-semibold text-slate-600">Archivo</th>
-                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Uso en sesiones</th>
+                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Uso</th>
                         <th className="px-3 py-2 text-right font-semibold text-slate-600">Opciones</th>
                       </tr>
                     </thead>
@@ -2824,7 +2915,9 @@ function App() {
                           <td className="px-3 py-2 text-slate-700">{renderMediaPreview(item)}</td>
                           <td className="px-3 py-2 text-slate-700">{item.title}</td>
                           <td className="px-3 py-2 text-slate-700">{item.stored_name || item.original_name}</td>
-                          <td className="px-3 py-2 text-slate-700">{item.session_materials_count || 0}</td>
+                          <td className="px-3 py-2 text-slate-700">
+                            {`Sesiones: ${item.session_materials_count || 0} · Talleres: ${item.workshops_count || 0}`}
+                          </td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap justify-end gap-2">
                               <button type="button" className="actionButton" onClick={() => onDownloadMediaLibraryItem(item)}>
@@ -3952,10 +4045,11 @@ function App() {
                       </div>
                       <div className="md:col-span-2">
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="session-description">Descripción</label>
-                        <input
+                        <textarea
                           id="session-description"
-                          className="fieldInput mb-0"
-                          placeholder="Descripción"
+                          className="fieldInput mb-0 min-h-24"
+                          rows={4}
+                          placeholder="Descripción de la sesión"
                           value={sessionForm.description}
                           onChange={(e) => setSessionForm({ ...sessionForm, description: e.target.value })}
                         />

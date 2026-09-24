@@ -30,4 +30,9 @@ class MediaLibraryItem extends Model
     {
         return $this->hasMany(SessionMaterial::class);
     }
+
+    public function workshops(): HasMany
+    {
+        return $this->hasMany(Workshop::class);
+    }
 }

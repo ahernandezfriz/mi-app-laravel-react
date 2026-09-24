@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\MediaLibraryItem;
 use App\Models\SchoolCourse;
 use App\Models\SchoolLevel;
 use App\Models\User;
@@ -103,6 +104,74 @@ class WorkshopTest extends TestCase
             ->assertJsonCount(0);
     }
 
+    public function test_professional_can_store_and_update_workshop_urls(): void
+    {
+        [$professional, $course] = $this->makeCourseContext();
+        Sanctum::actingAs($professional);
+
+        $created = $this->post('/api/workshops', [
+            'name' => 'Taller con enlaces',
+            'held_on' => '2026-09-11',
+            'school_course_id' => $course->id,
+            'urls' => ['https://ejemplo.cl/recurso-1', 'https://ejemplo.cl/recurso-2'],
+        ])->assertCreated()->json();
+
+        $this->assertSame(
+            ['https://ejemplo.cl/recurso-1', 'https://ejemplo.cl/recurso-2'],
+            $created['urls']
+        );
+
+        $this->getJson("/api/workshops/{$created['id']}")
+            ->assertOk()
+            ->assertJsonPath('urls.0', 'https://ejemplo.cl/recurso-1');
+
+        $this->post("/api/workshops/{$created['id']}", [
+            'name' => 'Taller con enlaces',
+            'held_on' => '2026-09-11',
+            'school_course_id' => $course->id,
+            'urls' => ['https://ejemplo.cl/actualizado'],
+        ])
+            ->assertOk()
+            ->assertJsonPath('urls.0', 'https://ejemplo.cl/actualizado')
+            ->assertJsonCount(1, 'urls');
+    }
+
+    public function test_professional_can_download_workshop_file_and_reject_invalid_type(): void
+    {
+        Storage::fake('public');
+        [$professional, $course] = $this->makeCourseContext();
+        Sanctum::actingAs($professional);
+
+        $file = UploadedFile::fake()->create('apoyo.pdf', 80, 'application/pdf');
+
+        $created = $this->post('/api/workshops', [
+            'name' => 'Taller con archivo',
+            'held_on' => '2026-09-11',
+            'school_course_id' => $course->id,
+            'file' => $file,
+        ])->assertCreated()->json();
+
+        $this->get("/api/workshops/{$created['id']}/download")
+            ->assertOk()
+            ->assertHeader('content-disposition');
+
+        $this->getJson('/api/media-library')
+            ->assertOk()
+            ->assertJsonFragment(['original_name' => 'apoyo.pdf'])
+            ->assertJsonPath('0.workshops_count', 1);
+
+        $invalid = UploadedFile::fake()->create('apoyo.txt', 20, 'text/plain');
+
+        $this->post("/api/workshops/{$created['id']}", [
+            'name' => 'Taller con archivo',
+            'held_on' => '2026-09-11',
+            'school_course_id' => $course->id,
+            'file' => $invalid,
+        ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['file']);
+    }
+
     public function test_professional_can_delete_workshop_and_file(): void
     {
         Storage::fake('public');
@@ -120,11 +189,46 @@ class WorkshopTest extends TestCase
 
         $workshop = Workshop::query()->findOrFail($created['id']);
         Storage::disk('public')->assertExists($workshop->storage_path);
+        $this->assertNotNull($workshop->media_library_item_id);
+        $this->assertDatabaseHas('media_library_items', ['id' => $workshop->media_library_item_id]);
 
         $this->deleteJson("/api/workshops/{$workshop->id}")->assertNoContent();
 
         $this->assertDatabaseMissing('workshops', ['id' => $workshop->id]);
-        Storage::disk('public')->assertMissing($workshop->storage_path);
+        $this->assertDatabaseHas('media_library_items', ['id' => $workshop->media_library_item_id]);
+        Storage::disk('public')->assertExists($workshop->storage_path);
+    }
+
+    public function test_professional_can_attach_existing_media_library_item(): void
+    {
+        Storage::fake('public');
+        [$professional, $course] = $this->makeCourseContext();
+        Sanctum::actingAs($professional);
+
+        $item = MediaLibraryItem::query()->create([
+            'user_id' => $professional->id,
+            'title' => 'Guía existente',
+            'original_name' => 'guia.pdf',
+            'stored_name' => 'guia.pdf',
+            'storage_path' => 'media-library/'.$professional->id.'/guia.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 80,
+        ]);
+        Storage::disk('public')->put($item->storage_path, 'pdf-demo');
+
+        $created = $this->post('/api/workshops', [
+            'name' => 'Taller con recurso de biblioteca',
+            'held_on' => '2026-09-11',
+            'school_course_id' => $course->id,
+            'media_library_item_id' => $item->id,
+        ])->assertCreated()->json();
+
+        $this->assertSame($item->id, $created['media_library_item_id']);
+        $this->assertTrue($created['has_material']);
+
+        $this->get("/api/workshops/{$created['id']}/download")
+            ->assertOk()
+            ->assertHeader('content-disposition');
     }
 
     /**

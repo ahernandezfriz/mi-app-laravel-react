@@ -81,6 +81,7 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/workshop-courses', [WorkshopController::class, 'courses']);
     Route::get('/workshops', [WorkshopController::class, 'index']);
     Route::post('/workshops', [WorkshopController::class, 'store']);
+    Route::get('/workshops/{workshop}', [WorkshopController::class, 'show']);
     Route::get('/workshops/{workshop}/download', [WorkshopController::class, 'download']);
     Route::put('/workshops/{workshop}', [WorkshopController::class, 'update']);
     Route::post('/workshops/{workshop}', [WorkshopController::class, 'update']);

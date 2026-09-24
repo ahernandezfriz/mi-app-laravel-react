@@ -10,10 +10,12 @@ export default function WorkshopsSection({
   onOpenCourse,
   formatDisplayDate,
   savingWorkshop,
+  mediaLibraryItems = [],
 }) {
   const [showModal, setShowModal] = useState(false)
+  const [lockCourse, setLockCourse] = useState(false)
 
-  function onOpenCreateModal() {
+  function resetCreateForm(overrides = {}) {
     setWorkshopForm((prev) => ({
       ...prev,
       name: '',
@@ -22,25 +24,48 @@ export default function WorkshopsSection({
       school_level_id: '',
       school_course_id: '',
       file: null,
+      media_library_item_id: '',
+      urls: [],
+      fromExistingCourse: false,
+      ...overrides,
     }))
+  }
+
+  function onOpenCreateModal() {
+    setLockCourse(false)
+    resetCreateForm()
+    setShowModal(true)
+  }
+
+  function onOpenAddForCourse(course) {
+    setLockCourse(true)
+    resetCreateForm({
+      school_level_id: String(course.school_level_id || course.level?.id || ''),
+      school_course_id: String(course.id),
+      fromExistingCourse: true,
+    })
     setShowModal(true)
   }
 
   function onOpenExistingCourse(course) {
     setShowModal(false)
+    setLockCourse(false)
     onOpenCourse(course)
   }
 
   async function onSubmit(event) {
-    const alreadyRegistered = workshopCourses.some(
-      (course) => String(course.id) === String(workshopForm.school_course_id),
-    )
-    if (alreadyRegistered) {
-      return
+    if (!lockCourse) {
+      const alreadyRegistered = workshopCourses.some(
+        (course) => String(course.id) === String(workshopForm.school_course_id),
+      )
+      if (alreadyRegistered) {
+        return
+      }
     }
     const saved = await onSaveWorkshop(event)
     if (saved) {
       setShowModal(false)
+      setLockCourse(false)
     }
   }
 
@@ -85,6 +110,9 @@ export default function WorkshopsSection({
                   <td className="px-3 py-3 text-slate-700">{formatDisplayDate(course.last_held_on)}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap justify-end gap-2">
+                      <button type="button" className="actionButton" onClick={() => onOpenAddForCourse(course)}>
+                        Agregar taller
+                      </button>
                       <button type="button" className="actionButton" onClick={() => onOpenCourse(course)}>
                         Ver talleres
                       </button>
@@ -100,17 +128,23 @@ export default function WorkshopsSection({
       <WorkshopFormModal
         open={showModal}
         title="Nuevo taller"
-        subtitle="Elige el curso del mismo listado que usas al crear un estudiante."
+        subtitle={lockCourse
+          ? `El taller se registrará en ${workshopCourses.find((course) => String(course.id) === String(workshopForm.school_course_id))?.display_name || 'este curso'}.`
+          : 'Elige el curso del mismo listado que usas al crear un estudiante.'}
         workshopForm={workshopForm}
         setWorkshopForm={setWorkshopForm}
         levels={levels}
-        lockCourse={false}
+        lockCourse={lockCourse}
         editingWorkshop={null}
-        existingCourses={workshopCourses}
+        existingCourses={lockCourse ? [] : workshopCourses}
         onOpenExistingCourse={onOpenExistingCourse}
-        onClose={() => setShowModal(false)}
+        onClose={() => {
+          setShowModal(false)
+          setLockCourse(false)
+        }}
         onSubmit={onSubmit}
         saving={savingWorkshop}
+        mediaLibraryItems={mediaLibraryItems}
       />
     </section>
   )

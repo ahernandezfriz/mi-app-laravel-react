@@ -13,9 +13,10 @@ export default function WorkshopCourseSection({
   onSaveWorkshop,
   onEditWorkshop,
   onDeleteWorkshop,
-  onDownloadWorkshop,
+  onViewWorkshop,
   formatDisplayDate,
   savingWorkshop,
+  mediaLibraryItems = [],
 }) {
   const [showModal, setShowModal] = useState(false)
 
@@ -28,6 +29,9 @@ export default function WorkshopCourseSection({
       school_level_id: String(selectedWorkshopCourse?.school_level_id || selectedWorkshopCourse?.level?.id || ''),
       school_course_id: String(selectedWorkshopCourse?.id || ''),
       file: null,
+      media_library_item_id: '',
+      urls: [],
+      fromExistingCourse: true,
       ...extra,
     }
   }
@@ -84,16 +88,14 @@ export default function WorkshopCourseSection({
             <tr>
               <th className="px-3 py-3 text-left font-semibold text-slate-600">Nombre</th>
               <th className="px-3 py-3 text-left font-semibold text-slate-600">Objetivo</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Descripción</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Fecha</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Material</th>
+              <th className="px-3 py-3 text-left font-semibold text-slate-600">Fecha de realización</th>
               <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {workshops.length === 0 ? (
               <tr>
-                <td className="px-3 py-6 text-slate-500" colSpan={6}>
+                <td className="px-3 py-6 text-slate-500" colSpan={4}>
                   Este curso aún no tiene talleres. Crea el primero desde aquí.
                 </td>
               </tr>
@@ -102,18 +104,12 @@ export default function WorkshopCourseSection({
                 <tr key={workshop.id} className="hover:bg-slate-50">
                   <td className="px-3 py-3 text-slate-700">{workshop.name}</td>
                   <td className="px-3 py-3 text-slate-700">{workshop.objective || 'Sin objetivo'}</td>
-                  <td className="px-3 py-3 text-slate-700">{workshop.description || 'Sin descripción'}</td>
                   <td className="px-3 py-3 text-slate-700">{formatDisplayDate(workshop.held_on)}</td>
-                  <td className="px-3 py-3 text-slate-700">
-                    {workshop.has_material ? (workshop.original_name || workshop.stored_name) : 'Sin archivo'}
-                  </td>
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap justify-end gap-2">
-                      {workshop.has_material ? (
-                        <button type="button" className="actionButton" onClick={() => onDownloadWorkshop(workshop)}>
-                          Descargar
-                        </button>
-                      ) : null}
+                      <button type="button" className="actionButton actionButtonPrimary" onClick={() => onViewWorkshop(workshop)}>
+                        Ver taller
+                      </button>
                       <button type="button" className="actionButton" onClick={() => onOpenEditModal(workshop)}>
                         Editar
                       </button>
@@ -141,6 +137,7 @@ export default function WorkshopCourseSection({
         onClose={onCloseModal}
         onSubmit={onSubmit}
         saving={savingWorkshop}
+        mediaLibraryItems={mediaLibraryItems}
       />
     </section>
   )
