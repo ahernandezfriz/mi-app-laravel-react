@@ -10,10 +10,10 @@ function getInitials(name) {
     .join('')
 }
 
-export default function StudentContextCard({ student, planCount = 0, planYear = null }) {
+export default function StudentContextCard({ student, planCount = 0, planYear = null, courseLabel = null }) {
   if (!student) return null
 
-  const course = student.course?.display_name || 'Sin curso'
+  const course = courseLabel || student.course?.display_name || 'Sin curso'
   const ageLabel = student.exact_age || formatExactAge(student.birth_date) || 'Sin fecha de nacimiento'
   const diagnosisLabel = Array.isArray(student.diagnoses) && student.diagnoses.length > 0
     ? student.diagnoses.map((d) => d.name).join('; ')

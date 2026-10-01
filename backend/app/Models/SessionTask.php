@@ -16,6 +16,11 @@ class SessionTask extends Model
         'name',
         'description',
         'rating',
+        'edited_from_bank',
+    ];
+
+    protected $casts = [
+        'edited_from_bank' => 'boolean',
     ];
 
     public function session(): BelongsTo

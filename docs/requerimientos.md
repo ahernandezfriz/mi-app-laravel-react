@@ -80,6 +80,9 @@ Profesiones iniciales (catálogo):
 - Un estudiante puede tener múltiples planes históricos (uno por año).
 - Debe existir historial visible en ficha del estudiante.
 - Sugerido: evitar duplicidad de plan para mismo estudiante+año.
+- Cada plan guarda un **snapshot de curso** (`school_course_id`) al crearse, independiente del curso actual del estudiante. Un plan 2026 permanece en 2 Básico A aunque el alumno esté en 3 Básico A en 2027.
+- Al crear un plan, si el estudiante ya tiene un plan anterior, el profesional debe indicar si **avanza de curso** o **se mantiene (repite)**. La secuencia institucional es Prekínder → Kínder → 1–8 Básico → 1–4 Medio, conservando la misma sección (A/B/C). Si avanza, y el nuevo plan es el de mayor año, también se actualiza el curso vigente del estudiante.
+- El año propuesto por defecto al crear un plan es el año siguiente al último plan existente.
 ### 4.3 Diagnóstico y cambios en el tiempo
 - El estudiante tiene un diagnóstico actual editable.
 - El diagnóstico puede cambiar con el tiempo.
@@ -95,14 +98,24 @@ Profesiones iniciales (catálogo):
 - Objetivo de la sesión
 - Descripción de actividades/tareas
 - Estado (borrador/finalizada)
+### 5.3 Reapertura y corrección
+- Al finalizar una sesión se bloquea la edición de contenido (tareas y calificaciones).
+- Una sesión finalizada puede volver a estado editable. El botón **Volver a editar** pide confirmación antes de reabrir.
+- Desde el listado de sesiones se puede **editar fecha y objetivo** también en sesiones finalizadas (sin reabrir el contenido de tareas).
 ## 6. Tareas y calificaciones
 ### 6.1 Biblioteca de tareas reutilizables
 - Cada profesional tiene su biblioteca de tareas.
 - Puede crear, editar, eliminar tareas.
 - Puede reutilizar tareas en distintas sesiones y planes.
 ### 6.2 Tareas por sesión
-- Cada sesión puede incluir varias tareas.
-- Datos de tarea: nombre, descripción.
+- Cada sesión puede incluir varias tareas (crear nuevas para esa sesión o importar del banco).
+- Datos de tarea: nombre, descripción (el campo descripción es un área de texto multilínea).
+- Las tareas de la sesión son editables (nombre y descripción) con **Editar** junto a **Eliminar**. La edición no modifica el banco: solo esa instancia en la sesión.
+- Bajo el nombre se muestra el origen:
+  - `Nueva` si se creó en la sesión.
+  - `Banco de tareas` si viene del banco y no se ha alterado.
+  - `Banco de tareas (editada)` solo si el profesional cambió nombre o descripción de una tarea importada del banco (`edited_from_bank`).
+- Antes de editar una tarea del banco, el sistema advierte que el cambio aplica solo a esa sesión y no al banco.
 - Calificaciones posibles:
   - Por lograr
   - Lo logra con dificultad
@@ -111,6 +124,7 @@ Profesiones iniciales (catálogo):
 - La calificación se guarda por **tarea en cada sesión**.
 - Al revisar una sesión, se deben ver los resultados de cada tarea de esa sesión.
 - Debe existir posibilidad de ver histórico de desempeño por tarea.
+- Cambiar la calificación no borra la observación ya escrita; el comentario se conserva hasta que el profesional lo edite o lo deje vacío.
 ## 7. Informes y exportación
 ### 7.1 Informe por sesión
 - Una sesión finalizada se puede exportar a PDF con:
@@ -126,6 +140,7 @@ Profesiones iniciales (catálogo):
   - todas las sesiones
   - todas las tareas
   - calificaciones por sesión
+  - el curso impreso es el snapshot del plan; si no hay snapshot, se usa el curso actual del estudiante
 ### 7.4 Alcance visual inicial de PDF
 - En primera versión no se requiere firma ni logo institucional.
 ## 8. Requerimientos no funcionales (iniciales)

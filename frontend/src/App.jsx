@@ -14,6 +14,7 @@ import SessionsDayCalendar from './shared/components/SessionsDayCalendar'
 import DashboardScheduledSessions from './features/dashboard/components/DashboardScheduledSessions'
 import { monthYearFromISODate, toLocalISODate } from './shared/utils/date'
 import { formatExactAge, getBirthDateValidationError } from './shared/utils/exactAge'
+import { getPlanCoursePreview } from './shared/utils/schoolCourseProgression'
 import { formatRut, getRutValidationError, normalizeRutInput } from './shared/utils/rut'
 import {
   buildSuspensionObservation,
@@ -88,6 +89,15 @@ function normalizeSessionTime(value) {
   const match = String(value).trim().match(/^(\d{2}):(\d{2})/)
   return match ? `${match[1]}:${match[2]}` : '09:00'
 }
+
+function isBankSessionTask(task) {
+  return Boolean(task?.task_template_id)
+}
+
+function getSessionTaskOriginLabel(task) {
+  if (!isBankSessionTask(task)) return 'Nueva'
+  return task?.edited_from_bank ? 'Banco de tareas (editada)' : 'Banco de tareas'
+}
 const validSections = new Set(['overview', 'profile', 'students', 'studentPlans', 'sessions', 'sessionDetail', 'tasks', 'mediaLibrary', 'workshops', 'workshopCourse', 'workshopDetail'])
 const APP_BASE = '/app'
 
@@ -160,9 +170,16 @@ function App() {
   const [isSuspendModalVisible, setIsSuspendModalVisible] = useState(false)
   const [suspendModalError, setSuspendModalError] = useState('')
   const [isSuspendingSession, setIsSuspendingSession] = useState(false)
+  const [showReopenModal, setShowReopenModal] = useState(false)
+  const [isReopenModalVisible, setIsReopenModalVisible] = useState(false)
+  const [reopenModalError, setReopenModalError] = useState('')
+  const [isReopeningSession, setIsReopeningSession] = useState(false)
+  const [showBankTaskEditModal, setShowBankTaskEditModal] = useState(false)
+  const [isBankTaskEditModalVisible, setIsBankTaskEditModalVisible] = useState(false)
+  const [taskPendingBankEdit, setTaskPendingBankEdit] = useState(null)
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [plans, setPlans] = useState([])
-  const [planForm, setPlanForm] = useState({ year: new Date().getFullYear() })
+  const [planForm, setPlanForm] = useState({ year: new Date().getFullYear(), repeats_course: false })
   const [selectedPlan, setSelectedPlan] = useState(null)
   const [sessions, setSessions] = useState([])
   const [sessionRatingSeries, setSessionRatingSeries] = useState([])
@@ -225,7 +242,7 @@ function App() {
     rating: 'por_lograr',
   })
   const [taskCreationMode, setTaskCreationMode] = useState('manual')
-  const [, setEditingTaskId] = useState(null)
+  const [editingTaskId, setEditingTaskId] = useState(null)
   const [taskHistory, setTaskHistory] = useState([])
   const [scheduledSessions, setScheduledSessions] = useState([])
   const [dashboardSelectedDate, setDashboardSelectedDate] = useState(() => toLocalISODate())
@@ -626,6 +643,16 @@ function App() {
   }, [showSuspendModal])
 
   useEffect(() => {
+    if (showReopenModal) {
+      setIsReopenModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsReopenModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showReopenModal])
+
+  useEffect(() => {
     if (!toast.show) return
 
     const timer = setTimeout(() => {
@@ -712,6 +739,43 @@ function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [showSuspendModal])
+
+  useEffect(() => {
+    if (!showReopenModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowReopenModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showReopenModal])
+
+  useEffect(() => {
+    if (showBankTaskEditModal) {
+      setIsBankTaskEditModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsBankTaskEditModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showBankTaskEditModal])
+
+  useEffect(() => {
+    if (!showBankTaskEditModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setShowBankTaskEditModal(false)
+        setTaskPendingBankEdit(null)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showBankTaskEditModal])
 
   useEffect(() => {
     async function buildSessionRatingSeries() {
@@ -1305,11 +1369,24 @@ function App() {
     setSessions([])
     setActiveSection('studentPlans')
     try {
-      const data = await api(`/students/${student.id}/treatment-plans`)
+      const [freshStudent, data] = await Promise.all([
+        api(`/students/${student.id}`),
+        api(`/students/${student.id}/treatment-plans`),
+      ])
+      setSelectedStudent(freshStudent)
       setPlans(data)
     } catch (error) {
       setStatus(error.message)
     }
+  }
+
+  function onOpenCreatePlanModal() {
+    const latestYear = plans.reduce((max, plan) => Math.max(max, Number(plan.year) || 0), 0)
+    setPlanForm({
+      year: latestYear ? latestYear + 1 : new Date().getFullYear(),
+      repeats_course: false,
+    })
+    setShowPlanModal(true)
   }
 
   async function onCreatePlan(e) {
@@ -1319,7 +1396,12 @@ function App() {
     try {
       await api(`/students/${selectedStudent.id}/treatment-plans`, {
         method: 'POST',
-        body: JSON.stringify({ year: Number(planForm.year) }),
+        body: JSON.stringify({
+          year: Number(planForm.year),
+          repeats_course: planCoursePreview.isFirstPlan
+            || !planCoursePreview.nextCourse
+            || Boolean(planForm.repeats_course),
+        }),
       })
       await onSelectStudent(selectedStudent)
       setShowPlanModal(false)
@@ -1499,23 +1581,8 @@ function App() {
     }
   }
 
-  async function onSelectSession(session) {
-    if (!selectedStudent || !selectedPlan) return
-    setSelectedSession(session)
-    setActiveSection('sessionDetail')
-    setEditingTaskId(null)
-    setTaskForm({
-      task_template_id: '',
-      name: '',
-      description: '',
-      rating: 'por_lograr',
-    })
-    setSessionObservation(session.general_observation || '')
-    setSuspensionReason(parseSuspensionReasonValue(session.general_observation) || 'estudiante_ausente')
-    setSessionMaterialForm({ title: '', media_library_item_id: '', file: null })
-    setShowTaskModal(false)
-    setTaskCreationMode('manual')
-
+  async function loadSessionDetails(session) {
+    if (!selectedStudent || !selectedPlan || !session) return
     try {
       const [tasksData, materialsData] = await Promise.all([
         api(`/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`),
@@ -1526,6 +1593,26 @@ function App() {
     } catch (error) {
       setStatus(error.message)
     }
+  }
+
+  async function onSelectSession(session) {
+    if (!selectedStudent || !selectedPlan) return
+    setSelectedSession(session)
+    setActiveSection('sessionDetail')
+    setEditingTaskId(null)
+    setTaskForm({
+      task_template_id: '',
+      task_template_ids: [],
+      name: '',
+      description: '',
+      rating: 'por_lograr',
+    })
+    setSessionObservation(session.general_observation || '')
+    setSuspensionReason(parseSuspensionReasonValue(session.general_observation) || 'estudiante_ausente')
+    setSessionMaterialForm({ title: '', media_library_item_id: '', file: null })
+    setShowTaskModal(false)
+    setTaskCreationMode('manual')
+    await loadSessionDetails(session)
   }
 
   async function onUploadSessionMaterial(e) {
@@ -1562,7 +1649,7 @@ function App() {
         },
       )
       setSessionMaterialForm({ title: '', media_library_item_id: '', file: null })
-      await Promise.all([onSelectSession(selectedSession), loadMediaLibraryItems()])
+      await Promise.all([loadSessionDetails(selectedSession), loadMediaLibraryItems()])
       setStatus('Material complementario cargado')
     } catch (error) {
       setStatus(error.message)
@@ -1579,7 +1666,7 @@ function App() {
         `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/materials/${materialId}`,
         { method: 'DELETE' },
       )
-      await onSelectSession(selectedSession)
+      await loadSessionDetails(selectedSession)
       setStatus('Material eliminado')
     } catch (error) {
       setStatus(error.message)
@@ -1643,7 +1730,7 @@ function App() {
       await api(`/media-library/${item.id}`, { method: 'DELETE' })
       await Promise.all([
         loadMediaLibraryItems(),
-        selectedSession ? onSelectSession(selectedSession) : Promise.resolve(),
+        selectedSession ? loadSessionDetails(selectedSession) : Promise.resolve(),
         selectedWorkshopCourse ? loadWorkshops(selectedWorkshopCourse.id) : Promise.resolve(),
       ])
       setStatus('Recurso eliminado de la biblioteca y de los vínculos en sesiones y talleres')
@@ -1842,7 +1929,17 @@ function App() {
     if (!selectedStudent || !selectedPlan || !selectedSession) return
     const path = `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks`
     try {
-      if (taskCreationMode === 'import' && taskForm.task_template_ids.length > 0) {
+      if (editingTaskId) {
+        await api(`${path}/${editingTaskId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: taskForm.name.trim(),
+            description: taskForm.description.trim() || '',
+            rating: taskForm.rating || null,
+          }),
+        })
+        notifyUser('Tarea actualizada en la sesión.', 'success')
+      } else if (taskCreationMode === 'import' && taskForm.task_template_ids.length > 0) {
         const selectedTemplates = taskTemplates.filter((template) =>
           taskForm.task_template_ids.includes(String(template.id)),
         )
@@ -1855,6 +1952,7 @@ function App() {
             rating: null,
           }),
         })))
+        setStatus('Tarea agregada a sesion')
       } else {
         const payload = {
           task_template_id:
@@ -1865,12 +1963,12 @@ function App() {
           rating: null,
         }
         await api(path, { method: 'POST', body: JSON.stringify(payload) })
+        setStatus('Tarea agregada a sesion')
       }
-      await onSelectSession(selectedSession)
+      await loadSessionDetails(selectedSession)
       setShowTaskModal(false)
       setEditingTaskId(null)
       setTaskCreationMode('manual')
-      setStatus('Tarea agregada a sesion')
     } catch (error) {
       setStatus(error.message)
     }
@@ -1890,7 +1988,7 @@ function App() {
           }),
         },
       )
-      await onSelectSession(selectedSession)
+      await loadSessionDetails(selectedSession)
       setStatus('Calificacion actualizada')
     } catch (error) {
       setStatus(error.message)
@@ -1954,14 +2052,19 @@ function App() {
   }
 
   async function onReopenSession() {
-    if (!selectedSession) return
+    if (!selectedSession || isReopeningSession) return
+    setIsReopeningSession(true)
+    setReopenModalError('')
     try {
       await onUpdateSessionState(
         { status: 'pendiente', generalObservation: sessionObservation || null },
         'Sesión habilitada para edición.',
       )
-    } catch {
-      // El mensaje de error ya se muestra en notifyUser.
+      setShowReopenModal(false)
+    } catch (error) {
+      setReopenModalError(error.message || 'No se pudo volver a editar la sesión.')
+    } finally {
+      setIsReopeningSession(false)
     }
   }
 
@@ -1994,7 +2097,7 @@ function App() {
         `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/tasks/${taskId}`,
         { method: 'DELETE' },
       )
-      await onSelectSession(selectedSession)
+      await loadSessionDetails(selectedSession)
       setStatus('Tarea eliminada de la sesion')
     } catch (error) {
       setStatus(error.message)
@@ -2039,6 +2142,38 @@ function App() {
     setShowTaskModal(true)
   }
 
+  function openEditSessionTaskForm(task) {
+    setEditingTaskId(task.id)
+    setTaskCreationMode('edit')
+    setTaskForm({
+      task_template_id: task.task_template_id ? String(task.task_template_id) : '',
+      task_template_ids: [],
+      name: task.name || '',
+      description: task.description || '',
+      rating: task.rating || '',
+    })
+    setShowTaskModal(true)
+  }
+
+  function onOpenEditSessionTask(task) {
+    if (!task || selectedSession?.status === 'finalizada') return
+    if (isBankSessionTask(task)) {
+      setTaskPendingBankEdit(task)
+      setShowBankTaskEditModal(true)
+      return
+    }
+    openEditSessionTaskForm(task)
+  }
+
+  function onConfirmBankTaskEdit() {
+    const task = taskPendingBankEdit
+    setShowBankTaskEditModal(false)
+    setTaskPendingBankEdit(null)
+    if (task) {
+      openEditSessionTaskForm(task)
+    }
+  }
+
   async function onOpenTodaySession(todaySessionItem) {
     const { student, plan, session } = todaySessionItem
     await onSelectStudent(student)
@@ -2048,6 +2183,16 @@ function App() {
 
   const selectedLevel = levels.find((level) => String(level.id) === String(studentForm.school_level_id))
   const availableCourses = selectedLevel?.courses ?? []
+  const planCoursePreview = useMemo(
+    () => getPlanCoursePreview(
+      levels,
+      selectedStudent,
+      plans,
+      planForm.year,
+      Boolean(planForm.repeats_course),
+    ),
+    [levels, selectedStudent, plans, planForm.year, planForm.repeats_course],
+  )
   const studentCourseOptions = useMemo(() => {
     const uniqueCourses = new Map()
     students.forEach((student) => {
@@ -3075,7 +3220,7 @@ function App() {
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      <button className="actionButton actionButtonPrimary" onClick={() => setShowPlanModal(true)}>
+                      <button className="actionButton actionButtonPrimary" onClick={onOpenCreatePlanModal}>
                         Crear plan
                       </button>
                       <button className="actionButton" onClick={() => setActiveSection('students')}>
@@ -3089,6 +3234,7 @@ function App() {
                       <thead className="bg-slate-50">
                         <tr>
                           <th className="w-28 px-4 py-3 text-left font-semibold text-slate-600">Año</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Curso del plan</th>
                           <th className="px-4 py-3 text-left font-semibold text-slate-600">Diagnóstico del plan</th>
                           <th className="min-w-[18rem] whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-600">Acciones</th>
                         </tr>
@@ -3096,7 +3242,7 @@ function App() {
                       <tbody className="divide-y divide-slate-100">
                         {plans.length === 0 && (
                           <tr>
-                            <td colSpan={3} className="px-4 py-10 text-center">
+                            <td colSpan={4} className="px-4 py-10 text-center">
                               <p className="font-medium text-slate-700">Sin planes de tratamiento</p>
                               <p className="mt-1 text-sm text-slate-500">
                                 Crea el primer plan para comenzar a registrar sesiones.
@@ -3104,7 +3250,7 @@ function App() {
                               <button
                                 type="button"
                                 className="actionButton actionButtonPrimary mt-4"
-                                onClick={() => setShowPlanModal(true)}
+                                onClick={onOpenCreatePlanModal}
                               >
                                 Crear plan de tratamiento
                               </button>
@@ -3118,6 +3264,7 @@ function App() {
                                 {plan.year}
                               </span>
                             </td>
+                            <td className="px-4 py-3 text-slate-700">{plan.course?.display_name || 'Sin curso'}</td>
                             <td className="px-4 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
                             <td className="whitespace-nowrap px-4 py-3">
                               <div className="flex flex-nowrap items-center justify-end gap-2">
@@ -3175,7 +3322,7 @@ function App() {
             )}
             {activeSection === 'sessions' && selectedStudent && selectedPlan && (
               <section className="space-y-4">
-                <StudentContextCard student={selectedStudent} planYear={selectedPlan.year} />
+                <StudentContextCard student={selectedStudent} planYear={selectedPlan.year} courseLabel={selectedPlan.course?.display_name} />
 
                 <section className="sectionCard">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -3411,7 +3558,7 @@ function App() {
                                   <span>{getSessionEntryActionLabel(session.status)}</span>
                                 </span>
                               </button>
-                              {displaySessionStatus(session.status) === 'pendiente' && (
+                              {(displaySessionStatus(session.status) === 'pendiente' || displaySessionStatus(session.status) === 'finalizada') && (
                                 <button
                                   type="button"
                                   className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
@@ -3422,7 +3569,7 @@ function App() {
                                       <path d="M12 20h9" strokeLinecap="round" />
                                       <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
                                     </svg>
-                                    <span>Editar datos</span>
+                                    <span>Editar</span>
                                   </span>
                                 </button>
                               )}
@@ -3553,7 +3700,12 @@ function App() {
                         )}
                         {sessionTasks.map((task) => (
                           <tr key={task.id} className="hover:bg-slate-50">
-                            <td className="px-3 py-3 text-slate-700">{task.name}</td>
+                            <td className="px-3 py-3 text-slate-700">
+                              <p className="font-medium text-slate-800">{task.name}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {getSessionTaskOriginLabel(task)}
+                              </p>
+                            </td>
                             <td className="px-3 py-3 text-slate-700">{task.description || 'Sin descripción'}</td>
                             <td className="px-3 py-3 text-slate-700">
                               <select
@@ -3576,8 +3728,28 @@ function App() {
                             <td className="px-3 py-3">
                               <div className="flex flex-wrap justify-end gap-2">
                                 <button
-                                  className="cursor-pointer rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                  type="button"
+                                  className={`rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100 ${
+                                    selectedSession.status === 'finalizada' ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                                  }`}
+                                  onClick={() => onOpenEditSessionTask(task)}
+                                  disabled={selectedSession.status === 'finalizada'}
+                                >
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                      <path d="M12 20h9" strokeLinecap="round" />
+                                      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Editar</span>
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100 ${
+                                    selectedSession.status === 'finalizada' ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                                  }`}
                                   onClick={() => onDeleteSessionTask(task.id)}
+                                  disabled={selectedSession.status === 'finalizada'}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
                                     <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -3706,7 +3878,14 @@ function App() {
 
                 <section className="mt-4 flex flex-wrap items-center gap-2">
                   {selectedSession.status === 'finalizada' ? (
-                    <button type="button" className="actionButton actionButtonPrimary cursor-pointer" onClick={onReopenSession}>
+                    <button
+                      type="button"
+                      className="actionButton actionButtonPrimary cursor-pointer"
+                      onClick={() => {
+                        setReopenModalError('')
+                        setShowReopenModal(true)
+                      }}
+                    >
                       Volver a editar
                     </button>
                   ) : (
@@ -3759,12 +3938,14 @@ function App() {
                   <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                       <h2 className="text-lg font-semibold text-slate-900">
-                        {taskCreationMode === 'import' ? 'Importar tarea' : 'Crear tarea'}
+                        {editingTaskId ? 'Editar tarea' : taskCreationMode === 'import' ? 'Importar tarea' : 'Crear tarea'}
                       </h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        {taskCreationMode === 'import'
-                          ? 'Selecciona una plantilla y ajusta los datos antes de guardar.'
-                          : 'Registra nombre y descripción de la tarea para esta sesión.'}
+                        {editingTaskId
+                          ? 'Modifica el nombre y la descripción de esta tarea en la sesión.'
+                          : taskCreationMode === 'import'
+                            ? 'Selecciona una plantilla y ajusta los datos antes de guardar.'
+                            : 'Registra nombre y descripción de la tarea para esta sesión.'}
                       </p>
                     </div>
                     <button
@@ -3779,7 +3960,7 @@ function App() {
 
                   <form onSubmit={onSaveSessionTask}>
                     <div className="space-y-3 px-5 py-4">
-                      {taskCreationMode === 'import' && (
+                      {taskCreationMode === 'import' && !editingTaskId && (
                         <div>
                           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                             Plantillas (selección múltiple)
@@ -3810,6 +3991,7 @@ function App() {
                           placeholder="Nombre de tarea"
                           value={taskForm.name}
                           onChange={(e) => setTaskForm({ ...taskForm, name: e.target.value })}
+                          required
                         />
                       </div>
 
@@ -3817,15 +3999,22 @@ function App() {
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Descripción
                         </label>
-                        <input
-                          className="fieldInput mb-0"
+                        <textarea
+                          className="fieldInput mb-0 min-h-24"
+                          rows={4}
                           placeholder="Descripción"
                           value={taskForm.description}
                           onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
                         />
                       </div>
 
-                      {taskCreationMode === 'import' && taskForm.task_template_ids.length > 0 && (
+                      {editingTaskId && isBankSessionTask({ task_template_id: taskForm.task_template_id }) && (
+                        <p className="rounded-[5px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                          Los cambios se aplicarán solo a esta sesión. El banco de tareas no se modifica.
+                        </p>
+                      )}
+
+                      {taskCreationMode === 'import' && !editingTaskId && taskForm.task_template_ids.length > 0 && (
                         <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
                           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Vista previa</p>
                           <p className="mt-1 text-sm font-medium text-slate-900">{taskForm.name || 'Sin nombre'}</p>
@@ -3841,9 +4030,83 @@ function App() {
                       <button type="button" className="actionButton" onClick={() => setShowTaskModal(false)}>
                         Cancelar
                       </button>
-                      <button className="actionButton actionButtonPrimary">Guardar tarea</button>
+                      <button className="actionButton actionButtonPrimary">
+                        {editingTaskId ? 'Guardar cambios' : 'Guardar tarea'}
+                      </button>
                     </div>
                   </form>
+                </div>
+              </div>
+            )}
+            {isBankTaskEditModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showBankTaskEditModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget) {
+                    setShowBankTaskEditModal(false)
+                    setTaskPendingBankEdit(null)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-lg rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showBankTaskEditModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Editar tarea del banco</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Confirma que quieres modificar esta tarea importada del banco.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => {
+                        setShowBankTaskEditModal(false)
+                        setTaskPendingBankEdit(null)
+                      }}
+                      aria-label="Cerrar modal"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-5 py-4">
+                    <p className="text-sm text-slate-700">
+                      La modificación se realizará solo para esta tarea en la sesión actual. No se actualizará
+                      la tarea del banco ni las demás sesiones donde esté en uso.
+                    </p>
+                    {taskPendingBankEdit?.name && (
+                      <p className="rounded-[5px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                        Tarea: <span className="font-medium text-slate-900">{taskPendingBankEdit.name}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                    <button
+                      type="button"
+                      className="actionButton"
+                      onClick={() => {
+                        setShowBankTaskEditModal(false)
+                        setTaskPendingBankEdit(null)
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="actionButton actionButtonPrimary"
+                      onClick={onConfirmBankTaskEdit}
+                    >
+                      Continuar edición
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -3921,6 +4184,73 @@ function App() {
                 </div>
               </div>
             )}
+            {isReopenModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showReopenModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget && !isReopeningSession) {
+                    setShowReopenModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-lg rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showReopenModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Volver a editar sesión</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Confirma que necesitas volver a editar esta sesión ya finalizada.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowReopenModal(false)}
+                      aria-label="Cerrar modal"
+                      disabled={isReopeningSession}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-5 py-4">
+                    {reopenModalError && (
+                      <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                        {reopenModalError}
+                      </p>
+                    )}
+                    <p className="text-sm text-slate-700">
+                      Al confirmar, la sesión volverá a estado pendiente y podrás modificar tareas, observación y material.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                    <button
+                      type="button"
+                      className="actionButton"
+                      onClick={() => setShowReopenModal(false)}
+                      disabled={isReopeningSession}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="actionButton actionButtonPrimary"
+                      onClick={onReopenSession}
+                      disabled={isReopeningSession}
+                    >
+                      {isReopeningSession ? 'Habilitando...' : 'Confirmar edición'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             {isPlanModalVisible && (
               <div
                 className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
@@ -3941,7 +4271,9 @@ function App() {
                   <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                       <h2 className="text-lg font-semibold text-slate-900">Crear plan de tratamiento</h2>
-                      <p className="mt-1 text-sm text-slate-500">Define el año académico para el nuevo plan de tratamiento.</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Define el año y si el estudiante aumenta de curso o se mantiene.
+                      </p>
                     </div>
                     <button
                       type="button"
@@ -3953,17 +4285,69 @@ function App() {
                     </button>
                   </div>
                   <form onSubmit={onCreatePlan}>
-                    <div className="px-5 py-4">
-                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="plan-year">Año</label>
-                      <input
-                        id="plan-year"
-                        className="fieldInput mb-0"
-                        type="number"
-                        min="2000"
-                        max="2100"
-                        value={planForm.year}
-                        onChange={(e) => setPlanForm({ year: e.target.value })}
-                      />
+                    <div className="space-y-4 px-5 py-4">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="plan-year">Año</label>
+                        <input
+                          id="plan-year"
+                          className="fieldInput mb-0"
+                          type="number"
+                          min="2000"
+                          max="2100"
+                          value={planForm.year}
+                          onChange={(e) => setPlanForm((current) => ({ ...current, year: e.target.value }))}
+                        />
+                      </div>
+
+                      {planCoursePreview.isFirstPlan ? (
+                        <p className="rounded-[5px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                          Este será el primer plan. Quedará con el curso actual:{' '}
+                          <strong>{planCoursePreview.referenceCourse?.display_name || 'Sin curso'}</strong>.
+                        </p>
+                      ) : (
+                        <fieldset className="space-y-2">
+                          <legend className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Curso para {planForm.year}
+                          </legend>
+                          <p className="text-sm text-slate-600">
+                            Curso del plan anterior ({planCoursePreview.previousPlan?.year}):{' '}
+                            <strong>{planCoursePreview.referenceCourse?.display_name || 'Sin curso'}</strong>
+                          </p>
+                          <label className="flex cursor-pointer items-start gap-2 rounded-[5px] border border-slate-200 px-3 py-2 text-sm text-slate-700">
+                            <input
+                              type="radio"
+                              name="plan-course-progress"
+                              className="mt-1"
+                              checked={!planForm.repeats_course}
+                              disabled={!planCoursePreview.nextCourse}
+                              onChange={() => setPlanForm((current) => ({ ...current, repeats_course: false }))}
+                            />
+                            <span>
+                              Aumenta de curso
+                              <span className="mt-0.5 block text-slate-500">
+                                {planCoursePreview.nextCourse
+                                  ? `Quedará en ${planCoursePreview.nextCourse.display_name}`
+                                  : 'No hay un curso siguiente en el catálogo'}
+                              </span>
+                            </span>
+                          </label>
+                          <label className="flex cursor-pointer items-start gap-2 rounded-[5px] border border-slate-200 px-3 py-2 text-sm text-slate-700">
+                            <input
+                              type="radio"
+                              name="plan-course-progress"
+                              className="mt-1"
+                              checked={Boolean(planForm.repeats_course) || !planCoursePreview.nextCourse}
+                              onChange={() => setPlanForm((current) => ({ ...current, repeats_course: true }))}
+                            />
+                            <span>
+                              Se mantiene en el mismo curso
+                              <span className="mt-0.5 block text-slate-500">
+                                Repite {planCoursePreview.referenceCourse?.display_name || 'el curso actual'}
+                              </span>
+                            </span>
+                          </label>
+                        </fieldset>
+                      )}
                     </div>
                     <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
                       <button type="button" className="actionButton" onClick={() => setShowPlanModal(false)}>
@@ -3995,7 +4379,11 @@ function App() {
                   <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
                     <div>
                       <h2 className="text-lg font-semibold text-slate-900">{editingSessionId ? 'Editar sesión' : 'Agendar sesión'}</h2>
-                      <p className="mt-1 text-sm text-slate-500">Completa los datos principales de la sesión.</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {editingSessionId && sessionForm.status === 'finalizada'
+                          ? 'Puedes actualizar fecha, hora, objetivo y descripción. El estado de la sesión se mantiene finalizada.'
+                          : 'Completa los datos principales de la sesión.'}
+                      </p>
                     </div>
                     <button
                       type="button"

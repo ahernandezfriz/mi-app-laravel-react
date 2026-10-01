@@ -31,6 +31,8 @@
 - [x] Restringir duplicidad por estudiante+anio.
 - [x] Guardar `diagnosis_snapshot` al crear plan.
 - [x] Mostrar historial anual de planes en ficha del estudiante.
+- [x] Snapshot de curso escolar al crear plan (`school_course_id`).
+- [x] Al crear un plan posterior: elegir si el estudiante avanza de curso o se mantiene (repite), con secuencia institucional y misma sección.
 
 ## Sprint 2 - Flujo terapeutico (prioridad alta)
 
@@ -39,17 +41,24 @@
 - [x] Campos minimos: fecha, objetivo, descripcion, estado.
 - [x] Permitir finalizar sesion.
 - [x] Mostrar historial de sesiones por plan.
+- [x] Confirmacion al reabrir una sesion finalizada (`Volver a editar`).
+- [x] Edicion de fecha y objetivo de sesiones finalizadas desde el listado.
 
 ### F. Biblioteca de tareas reutilizables
 - [ ] Crear CRUD de tareas por profesional.
 - [ ] Permitir seleccionar tareas de biblioteca en una sesion.
 - [ ] Permitir tareas libres (opcionales) dentro de sesion.
+- [x] Edicion de tareas solo en la sesion (sin alterar el banco).
+- [x] Origen visible: Nueva / Banco de tareas / Banco de tareas (editada).
+- [x] Advertencia al editar una tarea importada del banco.
+- [x] Descripcion de tarea como textarea multilinea.
 
 ### G. Calificaciones por tarea
 - [ ] Guardar calificacion por tarea dentro de cada sesion.
 - [ ] Escala: `Por lograr`, `Lo logra con dificultad`, `Lo logra`.
 - [ ] Al revisar sesion, mostrar resultados de cada tarea.
 - [ ] Mostrar historial de desempeno por tarea (vista resumida).
+- [x] Conservar observacion al cambiar la calificacion de una tarea.
 
 ## Sprint 3 - Reportes y salida MVP
 
@@ -70,6 +79,7 @@
 - [ ] Filtros avanzados por curso, anio, profesional, estado.
 - [ ] Plantillas de sesiones frecuentes.
 - [ ] Auditoria de cambios relevantes.
+- [ ] Prueba de actualizacion de tarea de sesion (`SessionTaskUpdateTest`) estable en sqlite (hoy falla por una migracion MySQL `MODIFY`).
 
 ### Futuros (orden recomendado: menos → mas invasivo)
 - [x] **1. Fecha de nacimiento / edad exacta:** capturar `birth_date` y mostrar edad tipo `7 años 3 meses 20 dias`; ver `docs/roadmap.md` Fase 8.2. (pendiente validación en UI)

@@ -46,3 +46,13 @@
     - `scripts/backup-db.ps1`
     - `scripts/restore-db.ps1`
     - `scripts/check-demo-counts.ps1`
+
+## Release - Sesiones, tareas de sesión y curso del plan (2026-10-01)
+
+1. **Volver a editar** una sesión finalizada pide confirmación antes de reabrirla a borrador.
+2. Desde el listado se puede editar fecha y objetivo de sesiones finalizadas, sin reabrir el contenido de tareas.
+3. Las tareas de una sesión se editan con **Editar** (nombre y descripción); el cambio no altera el banco. La descripción se ingresa en un textarea.
+4. Bajo cada tarea se muestra el origen: `Nueva`, `Banco de tareas` o `Banco de tareas (editada)` solo si se modificó una tarea importada (`edited_from_bank`).
+5. Al editar una tarea del banco, el sistema advierte que el cambio aplica solo a esa sesión.
+6. Cambiar la calificación de una tarea ya no borra la observación escrita.
+7. Cada plan anual guarda el curso escolar al crearse. Al crear un plan posterior se pregunta si el estudiante **avanza de curso** o **se mantiene (repite)** (Prekínder → Kínder → 1–8 Básico → 1–4 Medio, misma sección). El PDF consolidado usa el curso histórico del plan.

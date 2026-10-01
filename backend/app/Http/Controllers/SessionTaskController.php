@@ -14,13 +14,14 @@ use Illuminate\Validation\Rule;
 class SessionTaskController extends Controller
 {
     private const RATINGS = ['por_lograr', 'con_dificultad', 'logrado'];
+    private const TEMPLATE_COLUMNS = 'template:id,name,description';
 
     public function index(Request $request, Student $student, TreatmentPlan $treatmentPlan, TherapySession $session): JsonResponse
     {
         $this->authorizeChain($request, $student, $treatmentPlan, $session);
 
         return response()->json(
-            $session->tasks()->with('template:id,name')->orderBy('id')->get()
+            $session->tasks()->with(self::TEMPLATE_COLUMNS)->orderBy('id')->get()
         );
     }
 
@@ -45,7 +46,7 @@ class SessionTaskController extends Controller
 
         $task = $session->tasks()->create($validated);
 
-        return response()->json($task->load('template:id,name'), 201);
+        return response()->json($task->load(self::TEMPLATE_COLUMNS), 201);
     }
 
     public function update(
@@ -64,9 +65,16 @@ class SessionTaskController extends Controller
             'rating' => ['nullable', Rule::in(self::RATINGS)],
         ]);
 
+        $nameChanged = trim($validated['name']) !== trim((string) $sessionTask->name);
+        $descriptionChanged = trim((string) ($validated['description'] ?? '')) !== trim((string) ($sessionTask->description ?? ''));
+        if ($sessionTask->task_template_id && ($nameChanged || $descriptionChanged)) {
+            $validated['edited_from_bank'] = true;
+        }
+
+        // Solo actualiza esta instancia de sesión. No modifica el banco ni otras sesiones.
         $sessionTask->update($validated);
 
-        return response()->json($sessionTask->load('template:id,name'));
+        return response()->json($sessionTask->load(self::TEMPLATE_COLUMNS));
     }
 
     public function destroy(

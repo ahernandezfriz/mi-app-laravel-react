@@ -138,6 +138,19 @@ Dejar operativo un entorno de desarrollo reproducible con Docker para backend en
 - Definir timezone (Chile) para el calculo de edad al borde de medianoche.
 - Multi-diagnostico: lista sin jerarquia visible; el primero queda como referencia en `student_diagnosis_id` y `current_diagnosis` concatena todos con "; " (planes/PDF usan ese texto).
 
+## Fase 9 - Continuidad clinica: sesiones, tareas y curso del plan (completada)
+
+**Objetivo**
+Ajustar el flujo diario del profesional: reabrir y corregir sesiones con control, editar tareas de una sesion sin contaminar el banco, y conservar el curso escolar historico de cada plan anual.
+
+**Entregable**
+- Confirmacion al reabrir una sesion finalizada; edicion de fecha y objetivo desde el listado.
+- Tareas de sesion editables, origen banco/nueva/(editada) y aviso al modificar una del banco.
+- Snapshot de curso en el plan; al crear un plan posterior, decidir si avanza o se mantiene (repite).
+- Observacion de tarea conservada al cambiar la calificacion.
+
+**Estado:** Completada.
+
 ## Orden recomendado de implementacion (menos → mas invasivo)
 
 Prioridad practica para aplicar los items futuros de dominio/auth, sin cambiar aun el codigo:

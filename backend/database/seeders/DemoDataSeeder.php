@@ -123,6 +123,7 @@ class DemoDataSeeder extends Seeder
                         'created_by_user_id' => $professional->id,
                         'year' => (int) now()->format('Y'),
                         'diagnosis_snapshot' => $diagnosis->name,
+                        'school_course_id' => $course->id,
                     ]);
 
                     for ($sessionIndex = 1; $sessionIndex <= 3; $sessionIndex++) {

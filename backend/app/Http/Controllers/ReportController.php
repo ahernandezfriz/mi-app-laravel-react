@@ -78,6 +78,7 @@ class ReportController extends Controller
 
         $student->loadMissing('course');
         $plan = $treatmentPlan->load([
+            'course',
             'sessions' => fn ($query) => $query->with('tasks')->orderBy('session_date')->orderBy('id'),
         ]);
 

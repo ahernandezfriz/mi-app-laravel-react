@@ -167,10 +167,13 @@ Gestionar planes por anio y mantener historial del estudiante.
 - Crear/listar/editar planes por estudiante.
 - Campo de anio academico.
 - Historial visible por estudiante.
+- Snapshot de curso (`school_course_id`) al crear el plan.
+- Si ya existe un plan anterior, preguntar si avanza de curso o se mantiene (repite).
 
 **Criterios de aceptacion**
 - Se visualizan planes historicos por anio.
 - No se permite duplicar plan para mismo estudiante+anio.
+- El plan conserva el curso de su anio aunque el estudiante avance despues.
 
 **Dependencias**
 - TKT-001, TKT-006.
@@ -204,6 +207,8 @@ Registrar sesiones terapeuticas dentro del plan anual.
 **Criterios de aceptacion**
 - Sesiones quedan asociadas al plan correcto.
 - Se puede listar historial de sesiones por plan.
+- Reabrir una sesion finalizada (`Volver a editar`) requiere confirmacion.
+- Fecha y objetivo se pueden corregir desde el listado, incluso si la sesion esta finalizada.
 
 **Dependencias**
 - TKT-009.
@@ -219,6 +224,7 @@ Permitir reutilizar tareas entre distintas sesiones y planes.
 **Criterios de aceptacion**
 - Profesional reutiliza tareas previamente creadas.
 - Un profesional no edita biblioteca de otro profesional.
+- Editar una tarea en la sesion no modifica el banco; si viene del banco y se altera, se marca como `Banco de tareas (editada)`.
 
 **Dependencias**
 - TKT-005, TKT-011.
@@ -235,6 +241,7 @@ Registrar desempeno por tarea dentro de cada sesion.
 **Criterios de aceptacion**
 - Cada tarea de la sesion muestra su calificacion.
 - Se puede consultar historico por tarea en sesiones previas.
+- Cambiar la calificacion no elimina la observacion ya registrada.
 
 **Dependencias**
 - TKT-011, TKT-012.
@@ -284,6 +291,7 @@ Generar consolidado anual para revision integral.
 **Criterios de aceptacion**
 - El consolidado incluye todas las sesiones del plan.
 - Se visualizan tareas y calificaciones por sesion.
+- El curso impreso corresponde al snapshot del plan (no al curso actual del estudiante si ya avanzo).
 
 **Dependencias**
 - TKT-013.

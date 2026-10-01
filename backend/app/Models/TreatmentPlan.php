@@ -16,6 +16,7 @@ class TreatmentPlan extends Model
         'created_by_user_id',
         'year',
         'diagnosis_snapshot',
+        'school_course_id',
     ];
 
     public function student(): BelongsTo
@@ -26,6 +27,11 @@ class TreatmentPlan extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    public function course(): BelongsTo
+    {
+        return $this->belongsTo(SchoolCourse::class, 'school_course_id');
     }
 
     public function sessions(): HasMany

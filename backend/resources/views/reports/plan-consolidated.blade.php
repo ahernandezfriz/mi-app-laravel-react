@@ -19,7 +19,7 @@
                 </td>
                 <td width="50%">
                     <div class="label">Curso</div>
-                    <div class="value">{{ optional($student->course)->display_name ?: '—' }}</div>
+                    <div class="value">{{ optional($plan->course)->display_name ?: optional($student->course)->display_name ?: '—' }}</div>
                 </td>
             </tr>
             <tr>
