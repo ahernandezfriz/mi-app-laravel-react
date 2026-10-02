@@ -113,7 +113,7 @@ export default function WorkshopCourseSection({
                       <button type="button" className="actionButton" onClick={() => onOpenEditModal(workshop)}>
                         Editar
                       </button>
-                      <button type="button" className="actionButton" onClick={() => onDeleteWorkshop(workshop.id)}>
+                      <button type="button" className="actionButton" onClick={() => onDeleteWorkshop(workshop)}>
                         Eliminar
                       </button>
                     </div>

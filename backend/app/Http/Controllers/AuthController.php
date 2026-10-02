@@ -80,6 +80,7 @@ class AuthController extends Controller
             'rut' => ['required', 'string', 'max:20', new ChileanRutRule, Rule::unique('users', 'rut')->ignore($user->id)],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'profession_id' => ['required', 'integer', 'exists:professions,id'],
+            'secreduc_registry' => ['nullable', 'string', 'max:80'],
             'password' => ['nullable', 'string', 'min:8', 'confirmed'],
         ]);
 
@@ -87,6 +88,7 @@ class AuthController extends Controller
         $user->rut = $validated['rut'];
         $user->email = $validated['email'];
         $user->profession_id = $validated['profession_id'];
+        $user->secreduc_registry = $validated['secreduc_registry'] ?? null;
 
         if (! empty($validated['password'])) {
             $user->password = Hash::make($validated['password']);

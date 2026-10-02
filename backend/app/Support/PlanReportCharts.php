@@ -29,6 +29,7 @@ final class PlanReportCharts
                 'date' => (string) $session->session_date,
                 'status' => $status,
                 'reason' => $reason,
+                'observation' => (string) ($session->general_observation ?? ''),
                 'averageScore' => self::averageScore($session->tasks ?? new Collection()),
             ];
         });
@@ -36,12 +37,19 @@ final class PlanReportCharts
         $finalized = $normalized->where('status', 'finalizada');
         $suspended = $normalized->where('status', 'suspendida');
         $absent = $suspended->where('reason', SuspensionReason::ABSENT);
-        $activity = $suspended->where('reason', SuspensionReason::SCHOOL_ACTIVITY);
-        $unknown = max($suspended->count() - $absent->count() - $activity->count(), 0);
+        $leave = $suspended->where('reason', SuspensionReason::PROFESSIONAL_LEAVE);
+        $classSuspension = $suspended->where('reason', SuspensionReason::CLASS_SUSPENSION);
+        $other = $suspended->where('reason', SuspensionReason::OTHER);
+        $unknown = max(
+            $suspended->count() - $absent->count() - $leave->count() - $classSuspension->count() - $other->count(),
+            0
+        );
 
         $finalizedCount = $finalized->count();
         $absentCount = $absent->count();
-        $activityCount = $activity->count();
+        $leaveCount = $leave->count();
+        $activityCount = $classSuspension->count();
+        $otherCount = $other->count();
         $suspendedTotal = $suspended->count();
         $total = $normalized->count();
         $assistanceBase = $finalizedCount + $absentCount;
@@ -55,7 +63,7 @@ final class PlanReportCharts
         $globalSegments = self::percentSegments([
             ['key' => 'global_asistencia', 'label' => 'Sesiones realizadas', 'count' => $finalizedCount, 'percent' => $globalAttendancePercent, 'color' => '#10b981', 'value' => $globalAttendancePercent.'%'],
             ['key' => 'global_inasistencia', 'label' => 'Suspensión por inasistencia', 'count' => $absentCount, 'percent' => $globalAbsentPercent, 'color' => '#f59e0b', 'value' => $globalAbsentPercent.'%'],
-            ['key' => 'global_actividad', 'label' => 'Suspensión por actividad', 'count' => $activityCount, 'percent' => $globalActivityPercent, 'color' => '#d946ef', 'value' => $globalActivityPercent.'%'],
+            ['key' => 'global_clases', 'label' => 'Suspensión de clases', 'count' => $activityCount, 'percent' => $globalActivityPercent, 'color' => '#d946ef', 'value' => $globalActivityPercent.'%'],
         ]);
 
         $attendanceSegments = self::shareSegments([
@@ -65,7 +73,9 @@ final class PlanReportCharts
 
         $suspensionSegments = self::shareSegments([
             ['key' => 'ausente', 'label' => 'Estudiante ausente', 'count' => $absentCount, 'color' => '#ef4444', 'value' => (string) $absentCount],
-            ['key' => 'actividad', 'label' => 'Actividad escolar/suspensión', 'count' => $activityCount, 'color' => '#d946ef', 'value' => (string) $activityCount],
+            ['key' => 'licencia', 'label' => 'Licencia médica profesional', 'count' => $leaveCount, 'color' => '#0ea5e9', 'value' => (string) $leaveCount],
+            ['key' => 'clases', 'label' => 'Suspensión de clases', 'count' => $activityCount, 'color' => '#d946ef', 'value' => (string) $activityCount],
+            ['key' => 'otro', 'label' => 'Otro', 'count' => $otherCount, 'color' => '#64748b', 'value' => (string) $otherCount],
             ['key' => 'sin_motivo', 'label' => 'Sin motivo', 'count' => $unknown, 'color' => '#94a3b8', 'value' => (string) $unknown],
         ], $suspendedTotal);
 
@@ -103,7 +113,9 @@ final class PlanReportCharts
                 'segments' => $suspensionSegments,
                 'image' => PdfChartRenderer::donutDataUri($suspensionSegments),
                 'absent' => $absentCount,
+                'leave' => $leaveCount,
                 'activity' => $activityCount,
+                'other' => $otherCount,
                 'unknown' => $unknown,
                 'total' => $suspendedTotal,
             ],
@@ -190,11 +202,7 @@ final class PlanReportCharts
             $dateLabel = self::formatDate($entry['date']);
 
             if ($entry['status'] === 'suspendida') {
-                $color = match ($entry['reason']) {
-                    SuspensionReason::ABSENT => '#f59e0b',
-                    SuspensionReason::SCHOOL_ACTIVITY => '#d946ef',
-                    default => '#f43f5e',
-                };
+                $color = SuspensionReason::color($entry['reason']);
 
                 return [
                     'kind' => 'suspension',
@@ -202,7 +210,7 @@ final class PlanReportCharts
                     'y' => $height - $padding,
                     'color' => $color,
                     'label' => $dateLabel,
-                    'detail' => SuspensionReason::label($entry['reason']),
+                    'detail' => SuspensionReason::label($entry['reason'], $entry['observation'] ?? null),
                     'percent' => 0,
                 ];
             }

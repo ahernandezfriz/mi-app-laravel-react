@@ -32,8 +32,8 @@ export default function SessionContextCard({
 
   return (
     <article className="overflow-hidden rounded-[10px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-white p-4 shadow-sm">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,2fr)_auto_minmax(0,3fr)] lg:items-stretch lg:gap-x-4">
+        <div className="flex min-w-0 items-start gap-3">
           <div
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#6e62e5] text-base font-semibold text-white"
             aria-hidden="true"
@@ -69,7 +69,7 @@ export default function SessionContextCard({
         />
         <div className="border-t border-violet-200/90 pt-3 lg:hidden" aria-hidden="true" />
 
-        <div className="flex min-w-0 flex-1 flex-col justify-center gap-3 lg:pl-1">
+        <div className="flex min-w-0 flex-col justify-center gap-3 lg:pl-1">
           <div>
             <p className="text-base font-bold uppercase tracking-wide text-slate-800">Objetivo</p>
             <p className="mt-1 text-sm font-normal text-slate-700">{session.objective}</p>

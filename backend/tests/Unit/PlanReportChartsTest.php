@@ -16,8 +16,21 @@ class PlanReportChartsTest extends TestCase
             SuspensionReason::parse("Notas\n\nMotivo de suspensión: estudiante_ausente")
         );
         $this->assertSame(
-            SuspensionReason::SCHOOL_ACTIVITY,
+            SuspensionReason::CLASS_SUSPENSION,
             SuspensionReason::parse('Motivo de suspensión: actividad_escolar')
+        );
+        $this->assertSame(
+            SuspensionReason::PROFESSIONAL_LEAVE,
+            SuspensionReason::parse('Motivo de suspensión: licencia_medica_profesional')
+        );
+        $this->assertSame(
+            SuspensionReason::OTHER,
+            SuspensionReason::parse('Motivo de suspensión: otro: corte de luz')
+        );
+        $this->assertSame('corte de luz', SuspensionReason::otherDetail('Motivo de suspensión: otro: corte de luz'));
+        $this->assertSame(
+            'El estudiante participó con apoyo.',
+            SuspensionReason::notes("El estudiante participó con apoyo.\n\nMotivo de suspensión: estudiante_ausente")
         );
         $this->assertNull(SuspensionReason::parse(null));
     }

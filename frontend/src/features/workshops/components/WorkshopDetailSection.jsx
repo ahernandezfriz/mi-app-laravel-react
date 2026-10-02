@@ -49,13 +49,6 @@ export default function WorkshopDetailSection({
     }
   }
 
-  async function onConfirmDelete() {
-    const deleted = await onDeleteWorkshop(workshop.id)
-    if (deleted) {
-      onBack()
-    }
-  }
-
   return (
     <section className="space-y-4">
       <section className="sectionCard">
@@ -66,7 +59,7 @@ export default function WorkshopDetailSection({
           <button type="button" className="actionButton" onClick={onOpenEditModal}>
             Editar
           </button>
-          <button type="button" className="actionButton" onClick={onConfirmDelete}>
+          <button type="button" className="actionButton" onClick={() => onDeleteWorkshop(workshop)}>
             Eliminar
           </button>
         </div>

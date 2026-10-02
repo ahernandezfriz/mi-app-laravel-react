@@ -6,6 +6,7 @@
                 <p><strong>Nombre:</strong> {{ $professional->name ?? '—' }}</p>
                 <p><strong>Profesión:</strong> {{ optional($professional->profession)->name ?? '—' }}</p>
                 <p><strong>RUT:</strong> {{ $professional->rut ?? '—' }}</p>
+                <p><strong>Registro secreduc:</strong> {{ $professional->secreduc_registry ?: '—' }}</p>
             </td>
             <td width="42%" class="signature-pad">
                 <div class="signature-space">&nbsp;</div>

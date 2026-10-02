@@ -20,8 +20,10 @@ body {
   border-radius: 10px;
 }
 
-.sectionTitle {
-  @apply mb-3 text-lg font-semibold text-slate-900;
+/* Encabezados de tablas: mayúsculas y 1px menos que el cuerpo (14px → 13px). */
+table thead th {
+  font-size: 13px;
+  text-transform: uppercase;
 }
 
 .inlineForm {

@@ -11,7 +11,7 @@ Desarrollar una plataforma web para gestión y administración de terapias de pr
 El profesional debe poder:
 - Registrarse con: nombre completo, RUT, email, profesión, contraseña.
 - Iniciar sesión y cerrar sesión.
-- Editar su perfil (incluyendo contraseña).
+- Editar su perfil (incluyendo contraseña y **registro secreduc** opcional).
 - Recuperar contraseña.
 ### 2.3 Autenticación social (futuro)
 - Permitir ingresar/registrarse con Gmail (Google) y, opcionalmente, otro proveedor.
@@ -76,6 +76,7 @@ Profesiones iniciales (catálogo):
 - Crear plan de tratamiento anual por estudiante.
 - Ver historial de planes por estudiante.
 - Consultar planes históricos por año académico.
+- Eliminar un plan pide confirmación en un modal antes de borrar.
 ### 4.2 Reglas
 - Un estudiante puede tener múltiples planes históricos (uno por año).
 - Debe existir historial visible en ficha del estudiante.
@@ -97,11 +98,17 @@ Profesiones iniciales (catálogo):
 - Fecha de sesión
 - Objetivo de la sesión
 - Descripción de actividades/tareas
-- Estado (borrador/finalizada)
+- Estado (`pendiente` / `finalizada` / `suspendida`)
 ### 5.3 Reapertura y corrección
-- Al finalizar una sesión se bloquea la edición de contenido (tareas y calificaciones).
+- Al finalizar una sesión se bloquea la edición de contenido (tareas y calificaciones). El aviso **Contenido bloqueado** se muestra destacado.
 - Una sesión finalizada puede volver a estado editable. El botón **Volver a editar** pide confirmación antes de reabrir.
 - Desde el listado de sesiones se puede **editar fecha y objetivo** también en sesiones finalizadas (sin reabrir el contenido de tareas).
+- En el listado, la fecha se muestra como `28 SEP 2026` (negrita) con la hora debajo y el estado sobre la fecha.
+### 5.4 Suspensión
+- Al suspender se elige un motivo: **Estudiante ausente**, **Licencia médica profesional**, **Suspensión de clases** u **Otro** (texto libre obligatorio).
+- El motivo se guarda en la observación general con un marcador interno; la UI y los PDF muestran la etiqueta, no el token.
+- Valores históricos de “actividad escolar” se interpretan como **Suspensión de clases**.
+- En el listado, el badge **Suspendida** muestra el motivo en un tooltip.
 ## 6. Tareas y calificaciones
 ### 6.1 Biblioteca de tareas reutilizables
 - Cada profesional tiene su biblioteca de tareas.
@@ -133,16 +140,20 @@ Profesiones iniciales (catálogo):
   - plan de tratamiento
   - sesión y objetivo
   - tareas realizadas y calificaciones
+  - observación general de la sesión (después de las tareas; sin el marcador interno de suspensión)
+- Nombre de archivo: `nombre-apellido-dd-mmm-yyyy-HHmmss.pdf` (fecha y hora de la sesión).
+- Mientras se genera el PDF, la UI muestra un indicador de espera.
 ### 7.2 Envío por email
-- El informe de sesión se puede enviar al correo del apoderado registrado.
+- El informe de sesión se puede enviar al correo del apoderado registrado (mismo nombre de archivo que la descarga).
 ### 7.3 Informe consolidado anual
 - Exportación PDF consolidada de un plan de tratamiento con:
   - todas las sesiones
-  - todas las tareas
-  - calificaciones por sesión
+  - en sesiones realizadas: objetivo, tareas, calificaciones y observación general
+  - en sesiones **suspendidas**: solo fecha, estado y motivo (sin objetivo ni tareas)
   - el curso impreso es el snapshot del plan; si no hay snapshot, se usa el curso actual del estudiante
-### 7.4 Alcance visual inicial de PDF
-- En primera versión no se requiere firma ni logo institucional.
+- Nombre de archivo: `nombre-apellido-plan-consolidado-{año}.pdf`.
+### 7.4 Identidad profesional en PDF
+- Los informes incluyen firma del profesional (nombre, profesión y registro secreduc si está definido).
 ## 8. Requerimientos no funcionales (iniciales)
 - Seguridad con autenticación y autorización por rol.
 - Trazabilidad/historial de planes por año.

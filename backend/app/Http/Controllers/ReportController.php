@@ -28,13 +28,14 @@ class ReportController extends Controller
         abort_unless($payload['session']->status === 'finalizada', 422, 'Solo sesiones finalizadas pueden exportarse en PDF.');
 
         $pdf = Pdf::loadView('reports.session', $payload);
+        $fileName = $this->sessionPdfFilename($payload['student'], $payload['session']);
 
         return response(
             $pdf->output(),
             200,
             [
                 'Content-Type' => 'application/pdf',
-                'Content-Disposition' => 'attachment; filename="sesion-'.$payload['session']->id.'.pdf"',
+                'Content-Disposition' => 'attachment; filename="'.$fileName.'"',
             ]
         );
     }
@@ -51,7 +52,7 @@ class ReportController extends Controller
         $pdf = Pdf::loadView('reports.session', $payload);
 
         $recipient = $student->guardian_email;
-        $fileName = 'sesion-'.$payload['session']->id.'.pdf';
+        $fileName = $this->sessionPdfFilename($payload['student'], $payload['session']);
 
         Mail::raw(
             'Adjuntamos informe de sesion de '.$student->full_name.' (plan '.$treatmentPlan->year.').',
@@ -157,14 +158,28 @@ class ReportController extends Controller
         }
     }
 
+    private function sessionPdfFilename(Student $student, TherapySession $session): string
+    {
+        $months = [1 => 'ene', 2 => 'feb', 3 => 'mar', 4 => 'abr', 5 => 'may', 6 => 'jun', 7 => 'jul', 8 => 'ago', 9 => 'sep', 10 => 'oct', 11 => 'nov', 12 => 'dic'];
+        $date = Carbon::parse($session->session_date, 'America/Santiago')->startOfDay();
+        $time = Carbon::parse((string) ($session->session_time ?: '00:00:00'));
+
+        return $this->studentFilenameSlug($student)
+            .'-'.$date->format('d').'-'.$months[(int) $date->month].'-'.$date->format('Y')
+            .'-'.$time->format('His')
+            .'.pdf';
+    }
+
     private function consolidatedPdfFilename(Student $student, TreatmentPlan $plan): string
     {
-        $slug = Str::slug((string) $student->full_name);
-        if ($slug === '') {
-            $slug = 'estudiante';
-        }
+        return $this->studentFilenameSlug($student).'-plan-consolidado-'.$plan->year.'.pdf';
+    }
 
-        return $slug.'-consolidado-'.$plan->year.'.pdf';
+    private function studentFilenameSlug(Student $student): string
+    {
+        $slug = Str::slug((string) $student->full_name);
+
+        return $slug !== '' ? $slug : 'estudiante';
     }
 
     private function loadAuthorizedSession(

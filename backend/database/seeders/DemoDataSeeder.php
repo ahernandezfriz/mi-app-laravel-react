@@ -55,6 +55,7 @@ class DemoDataSeeder extends Seeder
                         'rut' => ChileanRut::format($data['rut']),
                         'role' => 'profesional',
                         'profession_id' => $professionIds->random(),
+                        'secreduc_registry' => sprintf('SEC-%s', str_pad((string) ($index + 1), 5, '0', STR_PAD_LEFT)),
                         'password' => Hash::make('password'),
                     ]
                 );

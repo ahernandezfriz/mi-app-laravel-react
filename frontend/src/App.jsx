@@ -8,6 +8,7 @@ import WorkshopDetailSection from './features/workshops/components/WorkshopDetai
 import FeedbackMessage from './shared/components/FeedbackMessage'
 import StudentContextCard from './shared/components/StudentContextCard'
 import SessionContextCard from './shared/components/SessionContextCard'
+import HoverTooltip from './shared/components/HoverTooltip'
 import IndicatorDonut from './shared/components/IndicatorDonut'
 import AppFooter from './shared/components/AppFooter'
 import SessionsDayCalendar from './shared/components/SessionsDayCalendar'
@@ -18,8 +19,9 @@ import { getPlanCoursePreview } from './shared/utils/schoolCourseProgression'
 import { formatRut, getRutValidationError, normalizeRutInput } from './shared/utils/rut'
 import {
   buildSuspensionObservation,
+  getSuspensionReasonColor,
   getSuspensionReasonDisplayLabel,
-  getSuspensionReasonShortLabel,
+  parseSuspensionOtherDetail,
   parseSuspensionReasonValue,
   sessionHasSuspensionReason,
   SUSPENSION_REASON_OPTIONS,
@@ -82,6 +84,20 @@ const ratingToScore = {
   con_dificultad: 1,
   por_lograr: 2,
   logrado: 3,
+}
+const emptyTaskRatingCounts = () => ({
+  con_dificultad: 0,
+  por_lograr: 0,
+  logrado: 0,
+})
+
+function countTaskRatings(tasks) {
+  return (Array.isArray(tasks) ? tasks : []).reduce((counts, task) => {
+    if (task?.rating && counts[task.rating] !== undefined) {
+      counts[task.rating] += 1
+    }
+    return counts
+  }, emptyTaskRatingCounts())
 }
 
 function normalizeSessionTime(value) {
@@ -147,6 +163,7 @@ function App() {
     rut: '',
     email: '',
     profession_id: '',
+    secreduc_registry: '',
     password: '',
     password_confirmation: '',
   })
@@ -170,10 +187,21 @@ function App() {
   const [isSuspendModalVisible, setIsSuspendModalVisible] = useState(false)
   const [suspendModalError, setSuspendModalError] = useState('')
   const [isSuspendingSession, setIsSuspendingSession] = useState(false)
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [isReopenModalVisible, setIsReopenModalVisible] = useState(false)
   const [reopenModalError, setReopenModalError] = useState('')
   const [isReopeningSession, setIsReopeningSession] = useState(false)
+  const [showDeletePlanModal, setShowDeletePlanModal] = useState(false)
+  const [isDeletePlanModalVisible, setIsDeletePlanModalVisible] = useState(false)
+  const [deletePlanModalError, setDeletePlanModalError] = useState('')
+  const [isDeletingPlan, setIsDeletingPlan] = useState(false)
+  const [planPendingDelete, setPlanPendingDelete] = useState(null)
+  const [showDeleteWorkshopModal, setShowDeleteWorkshopModal] = useState(false)
+  const [isDeleteWorkshopModalVisible, setIsDeleteWorkshopModalVisible] = useState(false)
+  const [deleteWorkshopModalError, setDeleteWorkshopModalError] = useState('')
+  const [isDeletingWorkshop, setIsDeletingWorkshop] = useState(false)
+  const [workshopPendingDelete, setWorkshopPendingDelete] = useState(null)
   const [showBankTaskEditModal, setShowBankTaskEditModal] = useState(false)
   const [isBankTaskEditModalVisible, setIsBankTaskEditModalVisible] = useState(false)
   const [taskPendingBankEdit, setTaskPendingBankEdit] = useState(null)
@@ -215,6 +243,7 @@ function App() {
   const [selectedSession, setSelectedSession] = useState(null)
   const [sessionObservation, setSessionObservation] = useState('')
   const [suspensionReason, setSuspensionReason] = useState('estudiante_ausente')
+  const [suspensionOtherDetail, setSuspensionOtherDetail] = useState('')
   const [sessionTasks, setSessionTasks] = useState([])
   const [sessionMaterials, setSessionMaterials] = useState([])
   const [sessionMaterialForm, setSessionMaterialForm] = useState({
@@ -552,6 +581,7 @@ function App() {
         rut: '',
         email: '',
         profession_id: '',
+        secreduc_registry: '',
         password: '',
         password_confirmation: '',
       })
@@ -563,6 +593,7 @@ function App() {
       rut: formatRut(currentUser.rut || ''),
       email: currentUser.email || '',
       profession_id: currentUser.profession_id ? String(currentUser.profession_id) : '',
+      secreduc_registry: currentUser.secreduc_registry || '',
       password: '',
       password_confirmation: '',
     })
@@ -651,6 +682,26 @@ function App() {
     const timer = setTimeout(() => setIsReopenModalVisible(false), 180)
     return () => clearTimeout(timer)
   }, [showReopenModal])
+
+  useEffect(() => {
+    if (showDeletePlanModal) {
+      setIsDeletePlanModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsDeletePlanModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showDeletePlanModal])
+
+  useEffect(() => {
+    if (showDeleteWorkshopModal) {
+      setIsDeleteWorkshopModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsDeleteWorkshopModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showDeleteWorkshopModal])
 
   useEffect(() => {
     if (!toast.show) return
@@ -754,6 +805,32 @@ function App() {
   }, [showReopenModal])
 
   useEffect(() => {
+    if (!showDeletePlanModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && !isDeletingPlan) {
+        setShowDeletePlanModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showDeletePlanModal, isDeletingPlan])
+
+  useEffect(() => {
+    if (!showDeleteWorkshopModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && !isDeletingWorkshop) {
+        setShowDeleteWorkshopModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showDeleteWorkshopModal, isDeletingWorkshop])
+
+  useEffect(() => {
     if (showBankTaskEditModal) {
       setIsBankTaskEditModalVisible(true)
       return
@@ -809,6 +886,7 @@ function App() {
                 : '',
               averageScore,
               performancePercent,
+              ratingCounts: countTaskRatings(tasks),
             }
           }),
         )
@@ -1024,6 +1102,7 @@ function App() {
         rut,
         email: profileForm.email,
         profession_id: Number(profileForm.profession_id),
+        secreduc_registry: profileForm.secreduc_registry.trim() || null,
         password: profileForm.password || null,
         password_confirmation: profileForm.password_confirmation || null,
       }
@@ -1411,37 +1490,52 @@ function App() {
     }
   }
 
-  async function onDeletePlan(planId) {
-    if (!selectedStudent) return
-    if (!window.confirm('Eliminar plan anual?')) return
+  function onAskDeletePlan(plan) {
+    setPlanPendingDelete(plan)
+    setDeletePlanModalError('')
+    setShowDeletePlanModal(true)
+  }
+
+  async function onConfirmDeletePlan() {
+    if (!selectedStudent || !planPendingDelete || isDeletingPlan) return
+    setIsDeletingPlan(true)
+    setDeletePlanModalError('')
 
     try {
-      await api(`/students/${selectedStudent.id}/treatment-plans/${planId}`, { method: 'DELETE' })
+      await api(`/students/${selectedStudent.id}/treatment-plans/${planPendingDelete.id}`, { method: 'DELETE' })
       await onSelectStudent(selectedStudent)
+      setShowDeletePlanModal(false)
+      setPlanPendingDelete(null)
       setStatus('Plan eliminado')
     } catch (error) {
-      setStatus(error.message)
+      setDeletePlanModalError(error.message || 'No se pudo eliminar el plan de tratamiento.')
+    } finally {
+      setIsDeletingPlan(false)
     }
   }
 
   async function onDownloadPlanConsolidatedPdf(planId) {
-    if (!selectedStudent) return
+    if (!selectedStudent || isGeneratingPdf) return
+    setIsGeneratingPdf(true)
     try {
       const response = await fetch(
         `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${planId}/consolidated-pdf`,
         { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
       )
       if (!response.ok) throw new Error('No se pudo generar PDF consolidado')
+      const plan = plans.find((item) => item.id === planId)
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `plan-${planId}-consolidado.pdf`
+      a.download = consolidatedPdfFilename(selectedStudent, plan)
       a.click()
       window.URL.revokeObjectURL(url)
       setStatus('PDF consolidado descargado')
     } catch (error) {
       setStatus(error.message)
+    } finally {
+      setIsGeneratingPdf(false)
     }
   }
 
@@ -1449,6 +1543,8 @@ function App() {
     if (!selectedStudent) return
     setSelectedPlan(plan)
     setActiveSection('sessions')
+    setSessions([])
+    setSessionRatingSeries([])
     setEditingSessionId(null)
     setSelectedSession(null)
     setSessionTasks([])
@@ -1548,7 +1644,9 @@ function App() {
   }
 
   async function onDownloadSessionPdf(sessionId) {
-    if (!selectedStudent || !selectedPlan) return
+    if (!selectedStudent || !selectedPlan || isGeneratingPdf) return
+    const session = sessions.find((item) => item.id === sessionId) || selectedSession
+    setIsGeneratingPdf(true)
     try {
       const response = await fetch(
         `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${sessionId}/pdf`,
@@ -1559,12 +1657,14 @@ function App() {
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `sesion-${sessionId}.pdf`
+      a.download = sessionPdfFilename(selectedStudent, session)
       a.click()
       window.URL.revokeObjectURL(url)
       setStatus('PDF de sesion descargado')
     } catch (error) {
       setStatus(error.message)
+    } finally {
+      setIsGeneratingPdf(false)
     }
   }
 
@@ -1609,6 +1709,7 @@ function App() {
     })
     setSessionObservation(session.general_observation || '')
     setSuspensionReason(parseSuspensionReasonValue(session.general_observation) || 'estudiante_ausente')
+    setSuspensionOtherDetail(parseSuspensionOtherDetail(session.general_observation))
     setSessionMaterialForm({ title: '', media_library_item_id: '', file: null })
     setShowTaskModal(false)
     setTaskCreationMode('manual')
@@ -1850,22 +1951,33 @@ function App() {
     })
   }
 
-  async function onDeleteWorkshop(workshopId) {
-    if (!window.confirm('Eliminar este taller? El archivo permanecerá en la biblioteca de medios.')) return false
+  function onAskDeleteWorkshop(workshop) {
+    setWorkshopPendingDelete(workshop)
+    setDeleteWorkshopModalError('')
+    setShowDeleteWorkshopModal(true)
+  }
+
+  async function onConfirmDeleteWorkshop() {
+    if (!workshopPendingDelete || isDeletingWorkshop) return
+    setIsDeletingWorkshop(true)
+    setDeleteWorkshopModalError('')
     try {
-      await api(`/workshops/${workshopId}`, { method: 'DELETE' })
+      await api(`/workshops/${workshopPendingDelete.id}`, { method: 'DELETE' })
       await Promise.all([loadWorkshopCourses(), loadMediaLibraryItems()])
       if (selectedWorkshopCourse) {
         await loadWorkshops(selectedWorkshopCourse.id)
       }
-      if (selectedWorkshop && Number(selectedWorkshop.id) === Number(workshopId)) {
+      if (selectedWorkshop && Number(selectedWorkshop.id) === Number(workshopPendingDelete.id)) {
         setSelectedWorkshop(null)
+        setActiveSection('workshopCourse')
       }
+      setShowDeleteWorkshopModal(false)
+      setWorkshopPendingDelete(null)
       setStatus('Taller eliminado')
-      return true
     } catch (error) {
-      setStatus(error.message)
-      return false
+      setDeleteWorkshopModalError(error.message || 'No se pudo eliminar el taller.')
+    } finally {
+      setIsDeletingWorkshop(false)
     }
   }
 
@@ -2070,11 +2182,16 @@ function App() {
 
   async function onSuspendSession() {
     if (!selectedSession || isSuspendingSession) return
+    if (suspensionReason === 'otro' && !String(suspensionOtherDetail || '').trim()) {
+      setSuspendModalError('Indica el motivo de suspensión.')
+      return
+    }
     setIsSuspendingSession(true)
     setSuspendModalError('')
     const { text: generalObservationWithReason, label: suspensionLabel } = buildSuspensionObservation(
       sessionObservation,
       suspensionReason,
+      suspensionOtherDetail,
     )
     try {
       await onUpdateSessionState(
@@ -2250,20 +2367,40 @@ function App() {
     const start = (safeSessionsPage - 1) * PAGE_SIZE
     return sessions.slice(start, start + PAGE_SIZE)
   }, [sessions, safeSessionsPage])
+  const MONTH_SHORT_LABELS = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC']
+  const MONTH_SHORT_SLUGS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
   const formatDisplayDate = (dateValue) => {
     if (!dateValue) return '-'
     const [year, month, day] = String(dateValue).split('-')
     if (!year || !month || !day) return dateValue
-    return `${day}-${month}-${year}`
+    const monthLabel = MONTH_SHORT_LABELS[Number(month) - 1]
+    if (!monthLabel) return dateValue
+    return `${Number(day)} ${monthLabel} ${year}`
   }
   const formatDisplayTime = (timeValue) => {
     if (!timeValue) return '--:--'
     return String(timeValue).slice(0, 5)
   }
+  const sessionPdfFilename = (student, session) => {
+    const slug = studentFilenameSlug(student)
+    const [year, month, day] = String(session?.session_date || '').split('-')
+    const monthSlug = MONTH_SHORT_SLUGS[Number(month) - 1] || 'ene'
+    const timeDigits = String(session?.session_time || '00:00:00').replace(/\D/g, '').padEnd(6, '0').slice(0, 6)
+    return `${slug}-${day}-${monthSlug}-${year}-${timeDigits}.pdf`
+  }
+  const studentFilenameSlug = (student) => (
+    String(student?.full_name || 'estudiante')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'estudiante'
+  )
+  const consolidatedPdfFilename = (student, plan) => (
+    `${studentFilenameSlug(student)}-plan-consolidado-${plan?.year}.pdf`
+  )
   const currentYear = new Date().getFullYear()
   const displaySessionStatus = (status) => (status === 'draft' ? 'pendiente' : status)
-  const finalizedSessionsCount = sessions.filter((session) => displaySessionStatus(session.status) === 'finalizada').length
-  const pendingSessionsCount = sessions.filter((session) => displaySessionStatus(session.status) !== 'finalizada').length
   const sortedScheduledSessions = useMemo(
     () =>
       [...scheduledSessions].sort((a, b) => {
@@ -2285,10 +2422,19 @@ function App() {
   const attendancePercent = assistanceBase > 0 ? Math.round((finalizedForAttendance / assistanceBase) * 100) : 0
   const suspensionPercent = assistanceBase > 0 ? 100 - attendancePercent : 0
   const suspensionByAbsent = absentSuspensionsForAttendance
-  const suspensionBySchool = suspendedSessions.filter((session) =>
-    sessionHasSuspensionReason(session.general_observation, 'actividad_escolar_suspension'),
+  const suspensionByLeave = suspendedSessions.filter((session) =>
+    sessionHasSuspensionReason(session.general_observation, 'licencia_medica_profesional'),
   ).length
-  const unknownSuspensionReason = Math.max(suspendedSessions.length - suspensionByAbsent - suspensionBySchool, 0)
+  const suspensionBySchool = suspendedSessions.filter((session) =>
+    sessionHasSuspensionReason(session.general_observation, 'suspension_de_clases'),
+  ).length
+  const suspensionByOther = suspendedSessions.filter((session) =>
+    sessionHasSuspensionReason(session.general_observation, 'otro'),
+  ).length
+  const unknownSuspensionReason = Math.max(
+    suspendedSessions.length - suspensionByAbsent - suspensionByLeave - suspensionBySchool - suspensionByOther,
+    0,
+  )
   const suspendedTotal = suspendedSessions.length
   const totalSessionsGlobal = sessions.length
   const globalAttendanceCount = finalizedForAttendance
@@ -2324,13 +2470,59 @@ function App() {
       },
       {
         key: 'global_actividad',
-        label: 'Suspensión por actividad',
+        label: 'Suspensión de clases',
         value: `${globalActivityPercent}%`,
         count: globalActivityCount,
         percent: globalActivityPercent,
         color: '#d946ef',
       },
     ].filter((segment) => segment.count > 0)
+  })()
+  const planTaskRatingTotals = sessionRatingSeries.reduce(
+    (totals, entry) => {
+      totals.con_dificultad += entry.ratingCounts?.con_dificultad || 0
+      totals.por_lograr += entry.ratingCounts?.por_lograr || 0
+      totals.logrado += entry.ratingCounts?.logrado || 0
+      return totals
+    },
+    emptyTaskRatingCounts(),
+  )
+  const planRatedTasksTotal =
+    planTaskRatingTotals.con_dificultad + planTaskRatingTotals.por_lograr + planTaskRatingTotals.logrado
+  const taskRatingSegments = (() => {
+    if (planRatedTasksTotal <= 0) return []
+    const raw = [
+      {
+        key: 'no_logra',
+        label: 'No lo logra',
+        value: planTaskRatingTotals.con_dificultad,
+        count: planTaskRatingTotals.con_dificultad,
+        color: '#ef4444',
+      },
+      {
+        key: 'por_lograr',
+        label: 'Por lograr',
+        value: planTaskRatingTotals.por_lograr,
+        count: planTaskRatingTotals.por_lograr,
+        color: '#eab308',
+      },
+      {
+        key: 'lo_logra',
+        label: 'Lo logra',
+        value: planTaskRatingTotals.logrado,
+        count: planTaskRatingTotals.logrado,
+        color: '#10b981',
+      },
+    ].filter((segment) => segment.count > 0)
+
+    let used = 0
+    return raw.map((segment, index) => {
+      const percent = index === raw.length - 1
+        ? Math.max(100 - used, 0)
+        : Math.round((segment.count / planRatedTasksTotal) * 100)
+      used += percent
+      return { ...segment, percent }
+    })
   })()
   const attendanceSegments = (() => {
     if (assistanceBase <= 0) return []
@@ -2371,11 +2563,25 @@ function App() {
         color: '#ef4444',
       },
       {
-        key: 'actividad',
-        label: 'Actividad escolar/suspensión',
+        key: 'licencia',
+        label: 'Licencia médica profesional',
+        value: suspensionByLeave,
+        count: suspensionByLeave,
+        color: '#0ea5e9',
+      },
+      {
+        key: 'clases',
+        label: 'Suspensión de clases',
         value: suspensionBySchool,
         count: suspensionBySchool,
         color: '#d946ef',
+      },
+      {
+        key: 'otro',
+        label: 'Otro',
+        value: suspensionByOther,
+        count: suspensionByOther,
+        color: '#64748b',
       },
       {
         key: 'sin_motivo',
@@ -2397,9 +2603,10 @@ function App() {
   })()
   const displaySessionStatusLabel = (session) => {
     const status = displaySessionStatus(session?.status)
-    if (status !== 'suspendida') return status
-    const reason = getSuspensionReasonShortLabel(session?.general_observation)
-    return reason ? `suspendida (${reason})` : 'suspendida'
+    if (status === 'pendiente') return 'Pendiente'
+    if (status === 'finalizada') return 'Finalizada'
+    if (status === 'suspendida') return 'Suspendida'
+    return status ? status.charAt(0).toUpperCase() + status.slice(1) : status
   }
   const getSessionEntryActionLabel = (status) => {
     const normalized = displaySessionStatus(status)
@@ -2484,17 +2691,12 @@ function App() {
         : (chartWidth - chartPadding * 2) / 2)
 
     if (entry.status === 'suspendida') {
-      const color = entry.suspensionReason === 'estudiante_ausente'
-        ? '#f59e0b'
-        : entry.suspensionReason === 'actividad_escolar_suspension'
-          ? '#d946ef'
-          : '#f43f5e'
       return {
         ...entry,
         kind: 'suspension',
         x,
         y: chartHeight - chartPadding,
-        color,
+        color: getSuspensionReasonColor(entry.suspensionReason),
       }
     }
 
@@ -2530,6 +2732,17 @@ function App() {
 
   return (
     <>
+      {isGeneratingPdf && (
+        <div className="fixed bottom-6 right-4 z-[80]" role="status" aria-live="polite">
+          <div className="flex items-center gap-3 rounded-[5px] border border-violet-200 bg-white px-4 py-3 text-sm text-slate-800 shadow-lg">
+            <span
+              className="h-5 w-5 animate-spin rounded-full border-2 border-violet-200 border-t-[#6e62e5]"
+              aria-hidden="true"
+            />
+            <span className="font-medium">Generando PDF...</span>
+          </div>
+        </div>
+      )}
       {toast.show && (
         <div className="fixed right-4 top-4 z-[70]">
           <div
@@ -2900,6 +3113,17 @@ function App() {
                         </select>
                       </div>
                       <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-secreduc">Registro secreduc</label>
+                        <input
+                          id="profile-secreduc"
+                          className="fieldInput mb-0"
+                          value={profileForm.secreduc_registry}
+                          onChange={(e) => setProfileForm((prev) => ({ ...prev, secreduc_registry: e.target.value }))}
+                          placeholder="Registro ministerial"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">Número de registro ministerial del profesional.</p>
+                      </div>
+                      <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="profile-password">Nueva contraseña (opcional)</label>
                         <input
                           id="profile-password"
@@ -2981,7 +3205,7 @@ function App() {
                 onBackToCourses={onBackToWorkshopCourses}
                 onSaveWorkshop={onSaveWorkshop}
                 onEditWorkshop={onEditWorkshop}
-                onDeleteWorkshop={onDeleteWorkshop}
+                onDeleteWorkshop={onAskDeleteWorkshop}
                 onViewWorkshop={onOpenWorkshopDetail}
                 formatDisplayDate={formatDisplayDate}
                 savingWorkshop={savingWorkshop}
@@ -2995,7 +3219,7 @@ function App() {
                 formatDisplayDate={formatDisplayDate}
                 onBack={onBackToWorkshopCourse}
                 onEditWorkshop={onEditWorkshop}
-                onDeleteWorkshop={onDeleteWorkshop}
+                onDeleteWorkshop={onAskDeleteWorkshop}
                 onDownloadWorkshop={onDownloadWorkshop}
                 workshopForm={workshopForm}
                 setWorkshopForm={setWorkshopForm}
@@ -3209,7 +3433,7 @@ function App() {
             )}
             {activeSection === 'studentPlans' && selectedStudent && (
               <section className="space-y-4">
-                <StudentContextCard student={selectedStudent} planCount={plans.length} />
+                <StudentContextCard student={selectedStudent} />
 
                 <section className="sectionCard">
                   <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3234,7 +3458,7 @@ function App() {
                       <thead className="bg-slate-50">
                         <tr>
                           <th className="w-28 px-4 py-3 text-left font-semibold text-slate-600">Año</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Curso del plan</th>
+                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Curso del estudiante</th>
                           <th className="px-4 py-3 text-left font-semibold text-slate-600">Diagnóstico del plan</th>
                           <th className="min-w-[18rem] whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-600">Acciones</th>
                         </tr>
@@ -3281,8 +3505,9 @@ function App() {
                                   </span>
                                 </button>
                                 <button
-                                  className="shrink-0 rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
+                                  className="shrink-0 rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
                                   onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}
+                                  disabled={isGeneratingPdf}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
                                     <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -3294,7 +3519,7 @@ function App() {
                                 </button>
                                 <button
                                   className="shrink-0 rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
-                                  onClick={() => onDeletePlan(plan.id)}
+                                  onClick={() => onAskDeletePlan(plan)}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
                                     <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -3338,10 +3563,10 @@ function App() {
                 </div>
 
                 <section className="rounded-[5px] border border-slate-200 bg-slate-50 p-4">
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_3fr]">
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
                     <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
                       <h3 className="text-base font-semibold text-slate-900">Indicadores</h3>
-                      <div className="mt-3 grid grid-cols-1 gap-3">
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
                           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resumen global del plan</p>
                           <div className="mt-2 flex items-center gap-3">
@@ -3353,13 +3578,29 @@ function App() {
                             <div className="space-y-1 text-xs text-slate-700">
                               <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />Sesiones realizadas: <strong>{globalAttendancePercent}%</strong></p>
                               <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />Susp. inasistencia: <strong>{globalAbsentPercent}%</strong></p>
-                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-fuchsia-500" />Susp. actividad: <strong>{globalActivityPercent}%</strong></p>
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-fuchsia-500" />Susp. de clases: <strong>{globalActivityPercent}%</strong></p>
                               <p className="pt-1 text-slate-500">Total sesiones: {totalSessionsGlobal}</p>
                             </div>
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Calificación de tareas del plan</p>
+                          <div className="mt-2 flex items-center gap-3">
+                            <IndicatorDonut
+                              key={`task-ratings-${planRatedTasksTotal}-${planTaskRatingTotals.con_dificultad}-${planTaskRatingTotals.por_lograr}-${planTaskRatingTotals.logrado}`}
+                              segments={taskRatingSegments}
+                              emptyLabel="Sin tareas calificadas en este plan"
+                            />
+                            <div className="space-y-1 text-xs text-slate-700">
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-red-500" />No lo logra: <strong>{planTaskRatingTotals.con_dificultad}</strong></p>
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" />Por lograr: <strong>{planTaskRatingTotals.por_lograr}</strong></p>
+                              <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />Lo logra: <strong>{planTaskRatingTotals.logrado}</strong></p>
+                              <p className="pt-1 text-slate-500">Total calificadas: {planRatedTasksTotal}</p>
+                            </div>
+                          </div>
+                        </div>
+
                         <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
                           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sesiones realizadas</p>
                           <div className="mt-2 flex items-center gap-3">
@@ -3383,23 +3624,24 @@ function App() {
                           ) : (
                             <div className="mt-2 flex items-center gap-3">
                               <IndicatorDonut
-                                key={`suspension-${suspendedTotal}-${suspensionByAbsent}-${suspensionBySchool}-${unknownSuspensionReason}`}
+                                key={`suspension-${suspendedTotal}-${suspensionByAbsent}-${suspensionByLeave}-${suspensionBySchool}-${suspensionByOther}-${unknownSuspensionReason}`}
                                 segments={suspensionSegments}
                                 emptyLabel="Sin motivos de suspensión para graficar"
                               />
                               <div className="space-y-1 text-xs text-slate-700">
                                 <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-red-500" />Ausente: <strong>{suspensionByAbsent}</strong></p>
-                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-fuchsia-500" />Actividad: <strong>{suspensionBySchool}</strong></p>
+                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-sky-500" />Licencia médica: <strong>{suspensionByLeave}</strong></p>
+                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-fuchsia-500" />Suspensión de clases: <strong>{suspensionBySchool}</strong></p>
+                                <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-500" />Otro: <strong>{suspensionByOther}</strong></p>
                                 <p><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Sin motivo: <strong>{unknownSuspensionReason}</strong></p>
                               </div>
                             </div>
                           )}
                         </div>
-                        </div>
                       </div>
                     </article>
 
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <article className="flex min-w-0 flex-col rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
                       <h3 className="text-base font-semibold text-slate-900">Gráfico de sesiones</h3>
                       <p className="mt-1 text-xs text-slate-500">
                         Progreso por sesiones realizadas y marcas de días suspendidos en la misma línea de tiempo.
@@ -3411,11 +3653,19 @@ function App() {
                         </span>
                         <span className="inline-flex items-center gap-1.5">
                           <span className="inline-block h-2.5 w-2.5 rotate-45 bg-amber-500" />
-                          Suspensión por inasistencia
+                          Estudiante ausente
+                        </span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rotate-45 bg-sky-500" />
+                          Licencia médica profesional
                         </span>
                         <span className="inline-flex items-center gap-1.5">
                           <span className="inline-block h-2.5 w-2.5 rotate-45 bg-fuchsia-500" />
-                          Suspensión por actividad
+                          Suspensión de clases
+                        </span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-block h-2.5 w-2.5 rotate-45 bg-slate-500" />
+                          Otro
                         </span>
                       </div>
                       <div className="mt-4 rounded-[5px] border border-slate-200 bg-slate-50 p-3">
@@ -3496,115 +3746,128 @@ function App() {
                       </div>
                     </article>
                   </div>
-
-                  <p className="mt-4 rounded-[5px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                    Sesiones finalizadas: <strong>{finalizedSessionsCount}</strong> - Sesiones pendientes: <strong>{pendingSessionsCount}</strong>
-                  </p>
                 </section>
 
-                <div className="overflow-x-auto rounded-[5px] border border-slate-200">
+                <div className="mt-8 overflow-x-auto rounded-[5px] border border-slate-200">
                   <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
                     <thead className="bg-slate-50">
                       <tr>
-                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Fecha</th>
+                        <th className="w-36 whitespace-nowrap px-3 py-3 text-left font-semibold text-slate-600">Fecha</th>
                         <th className="px-3 py-3 text-left font-semibold text-slate-600">Objetivo</th>
-                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Estado</th>
-                        <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                        <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {sessions.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="px-3 py-6 text-center text-slate-500">
+                          <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
                             No hay sesiones registradas para este plan de tratamiento.
                           </td>
                         </tr>
                       )}
-                      {paginatedSessions.map((session) => (
-                        <tr key={session.id} className="hover:bg-slate-50">
-                          <td className="px-3 py-3 text-slate-700">{formatDisplayDate(session.session_date)}</td>
-                          <td className="px-3 py-3 text-slate-700">{session.objective}</td>
-                          <td className="px-3 py-3">
-                            <span className={`rounded-[5px] px-2 py-1 text-xs font-semibold ${
-                              displaySessionStatus(session.status) === 'finalizada'
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : displaySessionStatus(session.status) === 'suspendida'
-                                  ? 'bg-rose-100 text-rose-700'
-                                  : 'bg-amber-100 text-amber-700'
-                            }`}>
-                              {displaySessionStatusLabel(session)}
-                            </span>
-                          </td>
-                          <td className="px-3 py-3">
-                            <div className="flex flex-wrap justify-end gap-2">
-                              <button
-                                type="button"
-                                className={getSessionEntryActionClass(session.status)}
-                                onClick={() => onSelectSession(session)}
-                              >
-                                <span className="inline-flex items-center gap-1.5">
-                                  {displaySessionStatus(session.status) === 'pendiente' ? (
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <rect x="3" y="5" width="18" height="16" rx="2" />
-                                      <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
-                                      <path d="m10 14 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  ) : (
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M2.2 12c1.2-4 4.9-7 9.8-7s8.6 3 9.8 7c-1.2 4-4.9 7-9.8 7s-8.6-3-9.8-7Z" />
-                                      <circle cx="12" cy="12" r="3" />
-                                    </svg>
-                                  )}
-                                  <span>{getSessionEntryActionLabel(session.status)}</span>
+                      {paginatedSessions.map((session) => {
+                        const sessionStatus = displaySessionStatus(session.status)
+                        const suspensionDetail = getSuspensionReasonDisplayLabel(session.general_observation) || 'No registrado'
+                        const statusBadgeClass = sessionStatus === 'finalizada'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : sessionStatus === 'suspendida'
+                            ? 'bg-rose-100 text-rose-700'
+                            : 'bg-amber-100 text-amber-700'
+
+                        return (
+                          <tr key={session.id} className="hover:bg-slate-50">
+                            <td className="w-36 whitespace-nowrap px-3 py-3 text-slate-700">
+                              {sessionStatus === 'suspendida' ? (
+                                <HoverTooltip
+                                  text={suspensionDetail}
+                                  ariaLabel={`Motivo de suspensión: ${suspensionDetail}`}
+                                  className={`inline-flex cursor-help items-center rounded-[5px] px-2 py-1 text-[11px] font-semibold ${statusBadgeClass}`}
+                                >
+                                  Suspendida<span className="ml-0.5 leading-none">*</span>
+                                </HoverTooltip>
+                              ) : (
+                                <span className={`inline-flex items-center rounded-[5px] px-2 py-1 text-[11px] font-semibold ${statusBadgeClass}`}>
+                                  {displaySessionStatusLabel(session)}
                                 </span>
-                              </button>
-                              {(displaySessionStatus(session.status) === 'pendiente' || displaySessionStatus(session.status) === 'finalizada') && (
+                              )}
+                              <div className="mt-1 font-bold">{formatDisplayDate(session.session_date)}</div>
+                              <div className="text-xs text-slate-500">{formatDisplayTime(session.session_time)} Hrs.</div>
+                            </td>
+                            <td className="px-3 py-3 text-slate-700">{session.objective}</td>
+                            <td className="px-3 py-3">
+                              <div className="flex flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
                                 <button
                                   type="button"
-                                  className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
-                                  onClick={() => onEditSession(session)}
+                                  className={getSessionEntryActionClass(session.status)}
+                                  onClick={() => onSelectSession(session)}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M12 20h9" strokeLinecap="round" />
-                                      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
-                                    </svg>
-                                    <span>Editar</span>
+                                    {sessionStatus === 'pendiente' ? (
+                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                        <rect x="3" y="5" width="18" height="16" rx="2" />
+                                        <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
+                                        <path d="m10 14 2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                                      </svg>
+                                    ) : (
+                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                        <path d="M2.2 12c1.2-4 4.9-7 9.8-7s8.6 3 9.8 7c-1.2 4-4.9 7-9.8 7s-8.6-3-9.8-7Z" />
+                                        <circle cx="12" cy="12" r="3" />
+                                      </svg>
+                                    )}
+                                    <span>{getSessionEntryActionLabel(session.status)}</span>
                                   </span>
                                 </button>
-                              )}
-                              {displaySessionStatus(session.status) === 'finalizada' && (
-                                <button
-                                  className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100"
-                                  onClick={() => onDownloadSessionPdf(session.id)}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
-                                      <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
-                                    </svg>
-                                    <span>PDF</span>
-                                  </span>
-                                </button>
-                              )}
-                              {displaySessionStatus(session.status) === 'pendiente' && (
-                                <button
-                                  className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
-                                  onClick={() => onDeleteSession(session.id)}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M3 6h18" strokeLinecap="round" />
-                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
-                                    </svg>
-                                    <span>Eliminar</span>
-                                  </span>
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                                {(sessionStatus === 'pendiente' || sessionStatus === 'finalizada') && (
+                                  <button
+                                    type="button"
+                                    className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
+                                    onClick={() => onEditSession(session)}
+                                  >
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                        <path d="M12 20h9" strokeLinecap="round" />
+                                        <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
+                                      </svg>
+                                      <span>Editar</span>
+                                    </span>
+                                  </button>
+                                )}
+                                {sessionStatus === 'finalizada' && (
+                                  <button
+                                    type="button"
+                                    className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                    onClick={() => onDownloadSessionPdf(session.id)}
+                                    disabled={isGeneratingPdf}
+                                  >
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+                                        <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
+                                      </svg>
+                                      <span>PDF</span>
+                                    </span>
+                                  </button>
+                                )}
+                                {sessionStatus === 'pendiente' && (
+                                  <button
+                                    type="button"
+                                    className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                    onClick={() => onDeleteSession(session.id)}
+                                  >
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                                        <path d="M3 6h18" strokeLinecap="round" />
+                                        <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
+                                      </svg>
+                                      <span>Eliminar</span>
+                                    </span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -3652,8 +3915,8 @@ function App() {
                     Primero crea o importa la tarea. La calificación se aplica cuando el profesional la ejecuta con el estudiante.
                   </p>
                   {selectedSession.status === 'finalizada' && (
-                    <p className="mt-2 rounded-[5px] border border-slate-200 bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                      Contenido bloqueado: la sesión está finalizada.
+                    <p className="mt-2 rounded-[5px] border border-amber-200 bg-amber-100 px-2 py-1 text-sm text-amber-800">
+                      <strong>Contenido bloqueado:</strong> la sesión está finalizada.
                     </p>
                   )}
 
@@ -3899,6 +4162,8 @@ function App() {
                       className="actionButton cursor-pointer"
                       onClick={() => {
                         setSuspendModalError('')
+                        setSuspensionReason(parseSuspensionReasonValue(sessionObservation || selectedSession.general_observation) || 'estudiante_ausente')
+                        setSuspensionOtherDetail(parseSuspensionOtherDetail(sessionObservation || selectedSession.general_observation))
                         setShowSuspendModal(true)
                       }}
                     >
@@ -3908,10 +4173,11 @@ function App() {
                   {selectedSession.status === 'finalizada' && (
                     <button
                       type="button"
-                      className="actionButton cursor-pointer"
+                      className="actionButton cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => onDownloadSessionPdf(selectedSession.id)}
+                      disabled={isGeneratingPdf}
                     >
-                      Generar PDF
+                      {isGeneratingPdf ? 'Generando PDF...' : 'Generar PDF'}
                     </button>
                   )}
                 </section>
@@ -4148,19 +4414,41 @@ function App() {
                         {suspendModalError}
                       </p>
                     )}
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Motivo
-                    </label>
-                    <select
-                      className="fieldInput mb-0"
-                      value={suspensionReason}
-                      onChange={(e) => setSuspensionReason(e.target.value)}
-                      disabled={isSuspendingSession}
-                    >
+                    <fieldset className="space-y-2" disabled={isSuspendingSession}>
+                      <legend className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Motivo
+                      </legend>
                       {SUSPENSION_REASON_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-start gap-2 rounded-[5px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800"
+                        >
+                          <input
+                            type="radio"
+                            name="suspension-reason"
+                            className="mt-0.5"
+                            value={option.value}
+                            checked={suspensionReason === option.value}
+                            onChange={() => setSuspensionReason(option.value)}
+                          />
+                          <span>{option.label}</span>
+                        </label>
                       ))}
-                    </select>
+                    </fieldset>
+                    {suspensionReason === 'otro' && (
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Indica el motivo
+                        </span>
+                        <textarea
+                          className="fieldInput mb-0 min-h-[72px]"
+                          value={suspensionOtherDetail}
+                          onChange={(e) => setSuspensionOtherDetail(e.target.value)}
+                          placeholder="Escribe el motivo de suspensión"
+                          disabled={isSuspendingSession}
+                        />
+                      </label>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
@@ -4246,6 +4534,140 @@ function App() {
                       disabled={isReopeningSession}
                     >
                       {isReopeningSession ? 'Habilitando...' : 'Confirmar edición'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {isDeletePlanModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showDeletePlanModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget && !isDeletingPlan) {
+                    setShowDeletePlanModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-lg rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showDeletePlanModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Eliminar plan de tratamiento</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Confirma que deseas eliminar este plan{planPendingDelete?.year ? ` ${planPendingDelete.year}` : ''}.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowDeletePlanModal(false)}
+                      aria-label="Cerrar modal"
+                      disabled={isDeletingPlan}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-5 py-4">
+                    {deletePlanModalError && (
+                      <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                        {deletePlanModalError}
+                      </p>
+                    )}
+                    <p className="text-sm text-slate-700">
+                      Se eliminarán las sesiones asociadas a este plan. Esta acción no se puede deshacer.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                    <button
+                      type="button"
+                      className="actionButton"
+                      onClick={() => setShowDeletePlanModal(false)}
+                      disabled={isDeletingPlan}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="actionButton border-red-300 bg-red-600 text-white hover:bg-red-700"
+                      onClick={onConfirmDeletePlan}
+                      disabled={isDeletingPlan}
+                    >
+                      {isDeletingPlan ? 'Eliminando...' : 'Confirmar eliminación'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {isDeleteWorkshopModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showDeleteWorkshopModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget && !isDeletingWorkshop) {
+                    setShowDeleteWorkshopModal(false)
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-lg rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showDeleteWorkshopModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Eliminar taller</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Confirma que deseas eliminar{workshopPendingDelete?.name ? ` “${workshopPendingDelete.name}”` : ' este taller'}.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => setShowDeleteWorkshopModal(false)}
+                      aria-label="Cerrar modal"
+                      disabled={isDeletingWorkshop}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-5 py-4">
+                    {deleteWorkshopModalError && (
+                      <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                        {deleteWorkshopModalError}
+                      </p>
+                    )}
+                    <p className="text-sm text-slate-700">
+                      El archivo permanecerá en la biblioteca de medios. Esta acción no se puede deshacer.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                    <button
+                      type="button"
+                      className="actionButton"
+                      onClick={() => setShowDeleteWorkshopModal(false)}
+                      disabled={isDeletingWorkshop}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="actionButton border-red-300 bg-red-600 text-white hover:bg-red-700"
+                      onClick={onConfirmDeleteWorkshop}
+                      disabled={isDeletingWorkshop}
+                    >
+                      {isDeletingWorkshop ? 'Eliminando...' : 'Confirmar eliminación'}
                     </button>
                   </div>
                 </div>

@@ -90,6 +90,18 @@
         </table>
     </div>
 
+    <div class="section">
+        <h2>Observación general de la sesión</h2>
+        @php
+            $sessionNotes = \App\Support\SuspensionReason::notes($session->general_observation);
+        @endphp
+        @if($sessionNotes !== '')
+            <p>{!! nl2br(e($sessionNotes)) !!}</p>
+        @else
+            <p class="muted">Sin observación general registrada.</p>
+        @endif
+    </div>
+
     @include('reports.partials.professional-signature')
 </body>
 </html>

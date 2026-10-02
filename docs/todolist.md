@@ -43,6 +43,9 @@
 - [x] Mostrar historial de sesiones por plan.
 - [x] Confirmacion al reabrir una sesion finalizada (`Volver a editar`).
 - [x] Edicion de fecha y objetivo de sesiones finalizadas desde el listado.
+- [x] Motivos de suspension: estudiante ausente, licencia medica profesional, suspension de clases u otro.
+- [x] Listado de sesiones: fecha `28 SEP 2026`, hora debajo y badge de estado (tooltip en Suspendida).
+- [x] Confirmacion modal al eliminar un plan anual.
 
 ### F. Biblioteca de tareas reutilizables
 - [ ] Crear CRUD de tareas por profesional.
@@ -65,8 +68,13 @@
 ### H. Informes y comunicacion
 - [ ] Generar PDF por sesion finalizada.
 - [ ] Incluir datos de estudiante, diagnostico, plan, sesion y tareas calificadas.
+- [x] Incluir observacion general de la sesion en el PDF (despues de las tareas).
+- [x] Nombre de PDF de sesion: `nombre-apellido-dd-mmm-yyyy-HHmmss.pdf`.
 - [ ] Enviar informe por correo al apoderado.
 - [ ] Generar PDF consolidado por plan anual.
+- [x] Sesiones suspendidas en el consolidado: solo fecha, estado y motivo.
+- [x] Nombre de PDF consolidado: `nombre-apellido-plan-consolidado-{anio}.pdf`.
+- [x] Registro secreduc en perfil y firma de informes.
 
 ### I. Calidad y estabilizacion
 - [ ] Pruebas de permisos y acceso por rol.

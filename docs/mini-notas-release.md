@@ -56,3 +56,14 @@
 5. Al editar una tarea del banco, el sistema advierte que el cambio aplica solo a esa sesión.
 6. Cambiar la calificación de una tarea ya no borra la observación escrita.
 7. Cada plan anual guarda el curso escolar al crearse. Al crear un plan posterior se pregunta si el estudiante **avanza de curso** o **se mantiene (repite)** (Prekínder → Kínder → 1–8 Básico → 1–4 Medio, misma sección). El PDF consolidado usa el curso histórico del plan.
+
+## Release - Listado de sesiones, PDF y confirmaciones (2026-10-02)
+
+1. Suspender una sesión usa radios fijos: **Estudiante ausente**, **Licencia médica profesional**, **Suspensión de clases** y **Otro** (con texto). Los valores antiguos de actividad escolar se leen como suspensión de clases.
+2. En el listado, la columna Fecha muestra el estado sobre la fecha, la fecha en negrita (`28 SEP 2026`) y la hora debajo. **Suspendida** abre un tooltip con el motivo, sin recortar el texto.
+3. Cabecera de sesión: ~40 % ficha del estudiante y ~60 % objetivo/descripción. Encabezados de tabla en mayúsculas. **Contenido bloqueado** resaltado en ámbar.
+4. El PDF de sesión incluye la **observación general** después de las tareas (sin el marcador interno del motivo). Nombre de archivo: `nombre-apellido-dd-mmm-yyyy-HHmmss.pdf`.
+5. El PDF consolidado, en sesiones suspendidas, imprime solo fecha, estado y motivo. Nombre: `nombre-apellido-plan-consolidado-{año}.pdf`.
+6. Mientras se genera un PDF aparece un indicador en la esquina inferior derecha.
+7. Eliminar un **plan anual** o un **taller** pide confirmación en un modal (ya no `window.confirm`).
+8. El perfil del profesional admite **Registro secreduc**; se imprime en la firma de los informes.

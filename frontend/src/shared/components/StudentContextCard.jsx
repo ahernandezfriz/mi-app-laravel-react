@@ -10,7 +10,7 @@ function getInitials(name) {
     .join('')
 }
 
-export default function StudentContextCard({ student, planCount = 0, planYear = null, courseLabel = null }) {
+export default function StudentContextCard({ student, planYear = null, courseLabel = null }) {
   if (!student) return null
 
   const course = courseLabel || student.course?.display_name || 'Sin curso'
@@ -48,13 +48,6 @@ export default function StudentContextCard({ student, planCount = 0, planYear = 
           </p>
         </div>
       </div>
-
-      {planCount > 0 && (
-        <p className="mt-3 border-t border-violet-100 pt-3 text-xs text-slate-600">
-          <strong className="text-slate-800">{planCount}</strong>{' '}
-          {planCount === 1 ? 'plan de tratamiento registrado' : 'planes de tratamiento registrados'}
-        </p>
-      )}
     </article>
   )
 }

@@ -54,7 +54,7 @@
                     <img class="donut" src="{{ $charts['global']['image'] }}" width="90" height="90" alt="Resumen global">
                     <p class="legend"><span style="color:#10b981;">&#9632;</span> Sesiones realizadas: <strong>{{ $charts['global']['attendancePercent'] }}%</strong></p>
                     <p class="legend"><span style="color:#f59e0b;">&#9632;</span> Susp. inasistencia: <strong>{{ $charts['global']['absentPercent'] }}%</strong></p>
-                    <p class="legend"><span style="color:#d946ef;">&#9632;</span> Susp. actividad: <strong>{{ $charts['global']['activityPercent'] }}%</strong></p>
+                    <p class="legend"><span style="color:#d946ef;">&#9632;</span> Susp. de clases: <strong>{{ $charts['global']['activityPercent'] }}%</strong></p>
                     <p class="muted">Total sesiones: {{ $charts['global']['total'] }}</p>
                 </td>
                 <td>
@@ -71,7 +71,9 @@
                     @else
                         <img class="donut" src="{{ $charts['suspension']['image'] }}" width="90" height="90" alt="Motivos de suspensión">
                         <p class="legend"><span style="color:#ef4444;">&#9632;</span> Ausente: <strong>{{ $charts['suspension']['absent'] }}</strong></p>
-                        <p class="legend"><span style="color:#d946ef;">&#9632;</span> Actividad: <strong>{{ $charts['suspension']['activity'] }}</strong></p>
+                        <p class="legend"><span style="color:#0ea5e9;">&#9632;</span> Licencia médica: <strong>{{ $charts['suspension']['leave'] }}</strong></p>
+                        <p class="legend"><span style="color:#d946ef;">&#9632;</span> Suspensión de clases: <strong>{{ $charts['suspension']['activity'] }}</strong></p>
+                        <p class="legend"><span style="color:#64748b;">&#9632;</span> Otro: <strong>{{ $charts['suspension']['other'] }}</strong></p>
                         <p class="legend"><span style="color:#94a3b8;">&#9632;</span> Sin motivo: <strong>{{ $charts['suspension']['unknown'] }}</strong></p>
                     @endif
                 </td>
@@ -81,8 +83,10 @@
         <h2>Gráfico de sesiones</h2>
         <p class="muted">Progreso por sesiones realizadas y marcas de días suspendidos en la misma línea de tiempo.</p>
         <p class="legend"><span style="color:#a21caf;">&#9632;</span> Sesión realizada (progreso %)</p>
-        <p class="legend"><span style="color:#f59e0b;">&#9632;</span> Suspensión por inasistencia</p>
-        <p class="legend"><span style="color:#d946ef;">&#9632;</span> Suspensión por actividad</p>
+        <p class="legend"><span style="color:#f59e0b;">&#9632;</span> Estudiante ausente</p>
+        <p class="legend"><span style="color:#0ea5e9;">&#9632;</span> Licencia médica profesional</p>
+        <p class="legend"><span style="color:#d946ef;">&#9632;</span> Suspensión de clases</p>
+        <p class="legend"><span style="color:#64748b;">&#9632;</span> Otro</p>
         <div class="line-wrap">
             @if($charts['line']['hasData'] && $charts['line']['image'])
                 <img class="timeline" src="{{ $charts['line']['image'] }}" width="640" height="200" alt="Gráfico lineal de progreso y suspensiones">
@@ -96,39 +100,60 @@
         <h2>Detalle de sesiones</h2>
         @forelse($plan->sessions as $session)
             <div class="session">
-                <p><strong>Sesión:</strong> {{ \Carbon\Carbon::parse($session->session_date)->format('d-m-Y') }} ({{ $session->status }})</p>
-                <p><strong>Objetivo:</strong> {{ $session->objective }}</p>
-                <p><strong>Descripción:</strong> {{ $session->description ?: 'Sin descripción' }}</p>
+                @if($session->status === 'suspendida')
+                    <p><strong>Fecha:</strong> {{ \Carbon\Carbon::parse($session->session_date)->format('d-m-Y') }}</p>
+                    <p><strong>Estado:</strong> Suspendida</p>
+                    <p><strong>Motivo:</strong>
+                        {{ \App\Support\SuspensionReason::label(
+                            \App\Support\SuspensionReason::parse($session->general_observation),
+                            $session->general_observation
+                        ) }}
+                    </p>
+                @else
+                    <p><strong>Sesión:</strong> {{ \Carbon\Carbon::parse($session->session_date)->format('d-m-Y') }} ({{ $session->status === 'draft' ? 'pendiente' : $session->status }})</p>
+                    <p><strong>Objetivo:</strong> {{ $session->objective }}</p>
+                    <p><strong>Descripción:</strong> {{ $session->description ?: 'Sin descripción' }}</p>
 
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Tarea</th>
-                            <th>Descripción</th>
-                            <th>Calificación</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @forelse($session->tasks as $task)
+                    <table class="data-table">
+                        <thead>
                             <tr>
-                                <td>{{ $task->name }}</td>
-                                <td>{{ $task->description ?: '-' }}</td>
-                                <td>
-                                    @switch($task->rating)
-                                        @case('con_dificultad') No lo logra @break
-                                        @case('por_lograr') Por lograr @break
-                                        @case('logrado') Lo logra @break
-                                        @default {{ $task->rating ?: '-' }}
-                                    @endswitch
-                                </td>
+                                <th>Tarea</th>
+                                <th>Descripción</th>
+                                <th>Calificación</th>
                             </tr>
-                        @empty
-                            <tr>
-                                <td colspan="3">Sin tareas en esta sesión.</td>
-                            </tr>
-                        @endforelse
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            @forelse($session->tasks as $task)
+                                <tr>
+                                    <td>{{ $task->name }}</td>
+                                    <td>{{ $task->description ?: '-' }}</td>
+                                    <td>
+                                        @switch($task->rating)
+                                            @case('con_dificultad') No lo logra @break
+                                            @case('por_lograr') Por lograr @break
+                                            @case('logrado') Lo logra @break
+                                            @default {{ $task->rating ?: '-' }}
+                                        @endswitch
+                                    </td>
+                                </tr>
+                            @empty
+                                <tr>
+                                    <td colspan="3">Sin tareas en esta sesión.</td>
+                                </tr>
+                            @endforelse
+                        </tbody>
+                    </table>
+                    @php
+                        $sessionNotes = \App\Support\SuspensionReason::notes($session->general_observation);
+                    @endphp
+                    <p><strong>Observación general:</strong>
+                        @if($sessionNotes !== '')
+                            {!! nl2br(e($sessionNotes)) !!}
+                        @else
+                            Sin observación general registrada.
+                        @endif
+                    </p>
+                @endif
             </div>
         @empty
             <p>No hay sesiones registradas en este plan.</p>

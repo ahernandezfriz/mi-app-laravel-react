@@ -29,6 +29,7 @@ class User extends Authenticatable
         'password',
         'role',
         'profession_id',
+        'secreduc_registry',
     ];
 
     /**
