@@ -25,7 +25,7 @@ class MediaLibraryController extends Controller
     {
         $validated = $request->validate([
             'title' => ['nullable', 'string', 'max:255'],
-            'file' => ['required', 'file', 'max:10240', 'mimes:pdf,ppt,pptx,doc,docx,xls,xlsx,jpg,jpeg,png,webp,gif'],
+            'file' => ['required', 'file', 'max:10240', 'extensions:pdf,ppt,pptx,doc,docx,xls,xlsx,jpg,jpeg,png,webp,gif'],
         ]);
 
         $file = $validated['file'];

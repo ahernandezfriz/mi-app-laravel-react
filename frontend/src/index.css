@@ -17,12 +17,18 @@ body {
 .sectionCard {
   @apply border bg-white p-4 shadow-sm md:p-5;
   border-color: #e5e7eb;
-  border-radius: 10px;
+  border-radius: 20px;
 }
 
-/* Encabezados de tablas: mayúsculas y 1px menos que el cuerpo (14px → 13px). */
+.sectionTitle {
+  @apply text-3xl font-bold leading-tight text-slate-900;
+}
+
+/* Encabezados de tablas: mayúsculas, negrita y 1px menos que el cuerpo (14px → 13px). */
 table thead th {
   font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
   text-transform: uppercase;
 }
 
@@ -42,7 +48,7 @@ table thead th {
 
 .actionButton {
   @apply border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-2;
-  border-radius: 10px;
+  border-radius: 20px;
 }
 
 .actionButton:focus {
@@ -58,6 +64,18 @@ table thead th {
 .actionButtonPrimary:hover {
   border-color: #5b50cf;
   background-color: #5b50cf;
+}
+
+.actionButtonView {
+  border-color: #6e62e5;
+  background-color: #f3f0ff;
+  color: #6e62e5;
+}
+
+.actionButtonView:hover {
+  border-color: #6e62e5;
+  background-color: #e8e4fb;
+  color: #5b50cf;
 }
 
 .listBox {
@@ -157,3 +175,57 @@ button:disabled,
 [role="button"][aria-disabled="true"] {
   cursor: not-allowed;
 }
+
+.fieldInputError {
+  border-color: #f87171;
+  background-color: #fef2f2;
+  box-shadow: 0 0 0 3px rgb(248 113 113 / 0.22);
+}
+
+.fieldInputWarn {
+  border-color: #fbbf24;
+  background-color: #fffbeb;
+  box-shadow: 0 0 0 3px rgb(251 191 36 / 0.28);
+}
+
+@keyframes savingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.savingSpinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 2px solid rgb(255 255 255 / 0.35);
+  border-top-color: #ffffff;
+  border-radius: 9999px;
+  animation: savingSpin 0.7s linear infinite;
+}
+
+@keyframes savingDotPulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.savingDots span {
+  display: inline-block;
+  animation: savingDotPulse 1.1s infinite ease-in-out;
+}
+
+.savingDots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.savingDots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+

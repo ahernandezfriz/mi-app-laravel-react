@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import AppRouter from './app/router/AppRouter'
 import TaskBankSection from './features/taskTemplates/components/TaskBankSection'
@@ -6,8 +6,10 @@ import WorkshopsSection from './features/workshops/components/WorkshopsSection'
 import WorkshopCourseSection from './features/workshops/components/WorkshopCourseSection'
 import WorkshopDetailSection from './features/workshops/components/WorkshopDetailSection'
 import FeedbackMessage from './shared/components/FeedbackMessage'
+import { BackIcon, ButtonLabel, DownloadIcon, IconActionButton, PlusIcon } from './shared/components/ActionButtonIcons'
 import StudentContextCard from './shared/components/StudentContextCard'
 import SessionContextCard from './shared/components/SessionContextCard'
+import TaskProgressBar from './shared/components/TaskProgressBar'
 import HoverTooltip from './shared/components/HoverTooltip'
 import IndicatorDonut from './shared/components/IndicatorDonut'
 import AppFooter from './shared/components/AppFooter'
@@ -15,7 +17,7 @@ import SessionsDayCalendar from './shared/components/SessionsDayCalendar'
 import DashboardScheduledSessions from './features/dashboard/components/DashboardScheduledSessions'
 import { monthYearFromISODate, toLocalISODate } from './shared/utils/date'
 import { formatExactAge, getBirthDateValidationError } from './shared/utils/exactAge'
-import { getPlanCoursePreview } from './shared/utils/schoolCourseProgression'
+import { getPlanCoursePreview, getPreviousPlanForYear, planCourseDisplayName } from './shared/utils/schoolCourseProgression'
 import { formatRut, getRutValidationError, normalizeRutInput } from './shared/utils/rut'
 import {
   buildSuspensionObservation,
@@ -26,6 +28,8 @@ import {
   sessionHasSuspensionReason,
   SUSPENSION_REASON_OPTIONS,
 } from './shared/utils/suspensionReason'
+import { userFacingApiError, userFacingCaughtError } from './shared/utils/userFacingError'
+import { defaultHeldOnForWorkshopYear, findWorkshopCourseForYear, workshopHeldYear } from './features/workshops/workshopCourseLabel'
 
 const apiBaseUrl = import.meta.env.VITE_API_URL
   || (import.meta.env.DEV ? 'http://localhost:8080/api' : '/api')
@@ -44,6 +48,57 @@ function getWorkshopFileError(file) {
     return 'El archivo no puede superar 10 MB.'
   }
   return ''
+}
+
+function asList(data) {
+  if (Array.isArray(data)) return data
+  if (Array.isArray(data?.data)) return data.data
+  if (data && typeof data === 'object') return Object.values(data)
+  return []
+}
+
+function planSessionsCount(plan) {
+  if (plan == null || plan.sessions_count == null || plan.sessions_count === '') return null
+  const count = Number(plan.sessions_count)
+  return Number.isFinite(count) ? count : null
+}
+
+const CLINICAL_CONTEXT_KEY = 'clinicalNavContext'
+
+function readClinicalContext() {
+  try {
+    return JSON.parse(sessionStorage.getItem(CLINICAL_CONTEXT_KEY) || 'null')
+  } catch {
+    return null
+  }
+}
+
+function persistClinicalContext(next = {}) {
+  const current = readClinicalContext() || {}
+  sessionStorage.setItem(CLINICAL_CONTEXT_KEY, JSON.stringify({ ...current, ...next }))
+}
+
+function asUrlList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean)
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed)) return asUrlList(parsed)
+    } catch {
+      return [value.trim()]
+    }
+  }
+  if (value && typeof value === 'object') {
+    return asUrlList(Object.values(value))
+  }
+  return []
+}
+
+function workshopHeldOn(value) {
+  const day = String(value || '').trim().slice(0, 10)
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : ''
 }
 
 function emptyWorkshopForm(overrides = {}) {
@@ -84,6 +139,19 @@ const ratingToScore = {
   con_dificultad: 1,
   por_lograr: 2,
   logrado: 3,
+}
+
+function taskProgressFromTasks(tasks) {
+  const ratedTasks = (Array.isArray(tasks) ? tasks : []).filter((task) => task?.rating && ratingToScore[task.rating])
+  if (ratedTasks.length === 0) {
+    return { percent: null, count: 0 }
+  }
+  const averageScore = ratedTasks.reduce((acc, task) => acc + ratingToScore[task.rating], 0) / ratedTasks.length
+  return {
+    percent: Math.round(((averageScore - 1) / 2) * 100),
+    count: ratedTasks.length,
+    averageScore,
+  }
 }
 const emptyTaskRatingCounts = () => ({
   con_dificultad: 0,
@@ -197,6 +265,17 @@ function App() {
   const [deletePlanModalError, setDeletePlanModalError] = useState('')
   const [isDeletingPlan, setIsDeletingPlan] = useState(false)
   const [planPendingDelete, setPlanPendingDelete] = useState(null)
+  const [showDeleteSessionModal, setShowDeleteSessionModal] = useState(false)
+  const [isDeleteSessionModalVisible, setIsDeleteSessionModalVisible] = useState(false)
+  const [deleteSessionModalError, setDeleteSessionModalError] = useState('')
+  const [isDeletingSession, setIsDeletingSession] = useState(false)
+  const [sessionPendingDelete, setSessionPendingDelete] = useState(null)
+  const [deleteSessionMode, setDeleteSessionMode] = useState('trash')
+  const [showRestoreSessionModal, setShowRestoreSessionModal] = useState(false)
+  const [isRestoreSessionModalVisible, setIsRestoreSessionModalVisible] = useState(false)
+  const [restoreSessionModalError, setRestoreSessionModalError] = useState('')
+  const [isRestoringSession, setIsRestoringSession] = useState(false)
+  const [sessionPendingRestore, setSessionPendingRestore] = useState(null)
   const [showDeleteWorkshopModal, setShowDeleteWorkshopModal] = useState(false)
   const [isDeleteWorkshopModalVisible, setIsDeleteWorkshopModalVisible] = useState(false)
   const [deleteWorkshopModalError, setDeleteWorkshopModalError] = useState('')
@@ -207,9 +286,15 @@ function App() {
   const [taskPendingBankEdit, setTaskPendingBankEdit] = useState(null)
   const [selectedStudent, setSelectedStudent] = useState(null)
   const [plans, setPlans] = useState([])
-  const [planForm, setPlanForm] = useState({ year: new Date().getFullYear(), repeats_course: false })
+  const [plansLoadError, setPlansLoadError] = useState('')
+  const [editingPlanId, setEditingPlanId] = useState(null)
+  const [planForm, setPlanForm] = useState({ year: new Date().getFullYear(), repeats_course: false, diagnosis_snapshot: '' })
   const [selectedPlan, setSelectedPlan] = useState(null)
   const [sessions, setSessions] = useState([])
+  const [trashedSessions, setTrashedSessions] = useState([])
+  const [showSessionTrash, setShowSessionTrash] = useState(false)
+  const [sessionsLoadError, setSessionsLoadError] = useState('')
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false)
   const [sessionRatingSeries, setSessionRatingSeries] = useState([])
   const [editingSessionId, setEditingSessionId] = useState(null)
   const [sessionForm, setSessionForm] = useState({
@@ -262,6 +347,7 @@ function App() {
   const [workshopForm, setWorkshopForm] = useState(() => emptyWorkshopForm())
   const [editingWorkshopId, setEditingWorkshopId] = useState(null)
   const [savingWorkshop, setSavingWorkshop] = useState(false)
+  const [workshopSubmitError, setWorkshopSubmitError] = useState('')
   const [isUploadingSessionMaterial, setIsUploadingSessionMaterial] = useState(false)
   const [taskForm, setTaskForm] = useState({
     task_template_id: '',
@@ -292,6 +378,7 @@ function App() {
   const [authFeedbackType, setAuthFeedbackType] = useState('info')
   const [studentFormErrors, setStudentFormErrors] = useState({})
   const [isSavingStudent, setIsSavingStudent] = useState(false)
+  const didRestoreClinicalContext = useRef(false)
   const healthUrl = useMemo(() => `${apiBaseUrl}/health`, [])
 
   const setActiveSection = useCallback((nextSection) => {
@@ -350,7 +437,9 @@ function App() {
       try {
         data = JSON.parse(responseText)
       } catch {
-        throw new Error(response.ok ? 'Respuesta inválida del servidor.' : `Error del servidor (${response.status}).`)
+        throw new Error(response.ok
+          ? 'La respuesta del servidor no es válida.'
+          : userFacingApiError(response.status, {}))
       }
     }
 
@@ -360,14 +449,11 @@ function App() {
         setToken('')
         setCurrentUser(null)
       }
-      throw new Error(data.message || 'Sesión expirada. Inicia sesión nuevamente.')
+      throw new Error(userFacingApiError(401, data))
     }
 
     if (!response.ok) {
-      const validationDetail = data.errors && typeof data.errors === 'object'
-        ? Object.values(data.errors).flat().filter(Boolean).join(' ')
-        : ''
-      throw new Error(validationDetail || data.message || 'Error en solicitud')
+      throw new Error(userFacingApiError(response.status, data))
     }
 
     return data
@@ -526,22 +612,29 @@ function App() {
   const loadWorkshopCourses = useCallback(async () => {
     try {
       const data = await api('/workshop-courses')
-      setWorkshopCourses(data)
+      setWorkshopCourses(asList(data))
     } catch (error) {
       setStatus(error.message)
     }
   }, [api])
 
-  const loadWorkshops = useCallback(async (courseId) => {
+  const loadWorkshops = useCallback(async (courseId, year) => {
     if (!courseId) {
       setWorkshops([])
-      return
+      return []
     }
     try {
-      const data = await api(`/workshops?school_course_id=${courseId}`)
-      setWorkshops(data)
+      const params = new URLSearchParams({ school_course_id: String(courseId) })
+      if (year) {
+        params.set('year', String(year))
+      }
+      const data = await api(`/workshops?${params.toString()}`)
+      const list = asList(data)
+      setWorkshops(list)
+      return list
     } catch (error) {
       setStatus(error.message)
+      return []
     }
   }, [api])
 
@@ -619,6 +712,66 @@ function App() {
   }, [token])
 
   useEffect(() => {
+    if (!token || didRestoreClinicalContext.current) return
+    didRestoreClinicalContext.current = true
+
+    const section = getSectionFromPath(window.location.pathname)
+    const needsContext = section === 'studentPlans' || section === 'sessions' || section === 'sessionDetail'
+    if (!needsContext) return
+
+    const ctx = readClinicalContext()
+    if (!ctx?.studentId) {
+      setActiveSection('students')
+      return
+    }
+
+    async function restoreClinicalContext() {
+      try {
+        const student = await api(`/students/${ctx.studentId}`)
+        setSelectedStudent(student)
+        const planList = asList(await api(`/students/${ctx.studentId}/treatment-plans`))
+        setPlans(planList)
+
+        if (!ctx.planId) {
+          if (section === 'sessions' || section === 'sessionDetail') {
+            setActiveSection('studentPlans')
+          }
+          return
+        }
+
+        const plan = planList.find((item) => Number(item.id) === Number(ctx.planId))
+        if (!plan) {
+          setActiveSection('studentPlans')
+          return
+        }
+
+        setSelectedPlan(plan)
+        setIsLoadingSessions(true)
+        const [sessionList, trashList] = await Promise.all([
+          api(`/students/${ctx.studentId}/treatment-plans/${plan.id}/sessions`).then(asList),
+          api(`/students/${ctx.studentId}/treatment-plans/${plan.id}/sessions/trash`).then(asList).catch(() => []),
+        ])
+        setSessions(sessionList)
+        setTrashedSessions(trashList)
+        setShowSessionTrash(false)
+        if (ctx.sessionId) {
+          const session = sessionList.find((item) => Number(item.id) === Number(ctx.sessionId))
+          if (session) setSelectedSession(session)
+        }
+        setActiveSectionState(section)
+      } catch (error) {
+        setSessionsLoadError(error.message)
+        setStatus(error.message)
+        setActiveSection('students')
+      } finally {
+        setIsLoadingSessions(false)
+      }
+    }
+
+    restoreClinicalContext()
+  }, [api, setActiveSection, token])
+
+  useEffect(() => {
     // Permite animar salida antes de desmontar visualmente el modal.
     if (showStudentModal) {
       setIsStudentModalVisible(true)
@@ -694,6 +847,26 @@ function App() {
   }, [showDeletePlanModal])
 
   useEffect(() => {
+    if (showDeleteSessionModal) {
+      setIsDeleteSessionModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsDeleteSessionModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showDeleteSessionModal])
+
+  useEffect(() => {
+    if (showRestoreSessionModal) {
+      setIsRestoreSessionModalVisible(true)
+      return
+    }
+
+    const timer = setTimeout(() => setIsRestoreSessionModalVisible(false), 180)
+    return () => clearTimeout(timer)
+  }, [showRestoreSessionModal])
+
+  useEffect(() => {
     if (showDeleteWorkshopModal) {
       setIsDeleteWorkshopModalVisible(true)
       return
@@ -708,10 +881,10 @@ function App() {
 
     const timer = setTimeout(() => {
       setToast((current) => ({ ...current, show: false }))
-    }, 3200)
+    }, 6000)
 
     return () => clearTimeout(timer)
-  }, [toast.show])
+  }, [toast.show, toast.message])
 
   useEffect(() => {
     if (!showStudentModal) return
@@ -732,7 +905,7 @@ function App() {
 
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
-        setShowPlanModal(false)
+        onClosePlanModal()
       }
     }
 
@@ -750,7 +923,7 @@ function App() {
 
   useEffect(() => {
     setSessionsPage(1)
-  }, [selectedPlan?.id, sessions.length])
+  }, [selectedPlan?.id, sessions.length, trashedSessions.length, showSessionTrash])
 
   useEffect(() => {
     if (!showSessionModal) return
@@ -818,6 +991,32 @@ function App() {
   }, [showDeletePlanModal, isDeletingPlan])
 
   useEffect(() => {
+    if (!showDeleteSessionModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && !isDeletingSession) {
+        setShowDeleteSessionModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showDeleteSessionModal, isDeletingSession])
+
+  useEffect(() => {
+    if (!showRestoreSessionModal) return
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape' && !isRestoringSession) {
+        setShowRestoreSessionModal(false)
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showRestoreSessionModal, isRestoringSession])
+
+  useEffect(() => {
     if (!showDeleteWorkshopModal) return
 
     const onKeyDown = (event) => {
@@ -865,14 +1064,10 @@ function App() {
         const series = await Promise.all(
           sessions.map(async (session) => {
             const status = session.status === 'draft' ? 'pendiente' : session.status
-            const tasks = await api(
+            const tasks = asList(await api(
               `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`,
-            )
-            const ratedTasks = tasks.filter((task) => task.rating && ratingToScore[task.rating])
-            const averageScore = ratedTasks.length
-              ? ratedTasks.reduce((acc, task) => acc + ratingToScore[task.rating], 0) / ratedTasks.length
-              : null
-            const performancePercent = averageScore !== null ? Math.round(((averageScore - 1) / 2) * 100) : null
+            ))
+            const progress = taskProgressFromTasks(tasks)
 
             return {
               sessionId: session.id,
@@ -884,8 +1079,9 @@ function App() {
               suspensionLabel: status === 'suspendida'
                 ? (getSuspensionReasonDisplayLabel(session.general_observation) || 'Sin motivo')
                 : '',
-              averageScore,
-              performancePercent,
+              averageScore: progress.averageScore ?? null,
+              performancePercent: progress.percent,
+              ratedTasksCount: progress.count,
               ratingCounts: countTaskRatings(tasks),
             }
           }),
@@ -963,7 +1159,7 @@ function App() {
       setActiveSection('workshops')
       return
     }
-    loadWorkshops(selectedWorkshopCourse.id)
+    loadWorkshops(selectedWorkshopCourse.id, selectedWorkshopCourse.year)
   }, [activeSection, loadWorkshops, selectedWorkshopCourse, setActiveSection, token])
 
   useEffect(() => {
@@ -1446,6 +1642,8 @@ function App() {
     setSelectedStudent(student)
     setSelectedPlan(null)
     setSessions([])
+    setPlans([])
+    setPlansLoadError('')
     setActiveSection('studentPlans')
     try {
       const [freshStudent, data] = await Promise.all([
@@ -1453,38 +1651,87 @@ function App() {
         api(`/students/${student.id}/treatment-plans`),
       ])
       setSelectedStudent(freshStudent)
-      setPlans(data)
+      setPlans(asList(data))
+      persistClinicalContext({ studentId: freshStudent.id, planId: null, sessionId: null })
     } catch (error) {
+      setPlans([])
+      setPlansLoadError(error.message)
       setStatus(error.message)
+    }
+  }
+
+  async function reloadTreatmentPlans(student = selectedStudent) {
+    if (!student) return
+    try {
+      const data = asList(await api(`/students/${student.id}/treatment-plans`))
+      setPlans(data)
+      setPlansLoadError('')
+    } catch (error) {
+      setPlansLoadError(error.message)
     }
   }
 
   function onOpenCreatePlanModal() {
     const latestYear = plans.reduce((max, plan) => Math.max(max, Number(plan.year) || 0), 0)
+    setEditingPlanId(null)
     setPlanForm({
       year: latestYear ? latestYear + 1 : new Date().getFullYear(),
       repeats_course: false,
+      diagnosis_snapshot: selectedStudent?.current_diagnosis || '',
     })
     setShowPlanModal(true)
   }
 
-  async function onCreatePlan(e) {
+  function onOpenEditPlanModal(plan) {
+    if (!plan) return
+    const otherPlans = plans.filter((item) => Number(item.id) !== Number(plan.id))
+    const previousPlan = getPreviousPlanForYear(otherPlans, plan.year)
+    const previousCourseId = previousPlan?.course?.id
+    const currentCourseId = plan.course?.id
+    const repeatsCourse = previousCourseId && currentCourseId
+      ? Number(previousCourseId) === Number(currentCourseId)
+      : true
+
+    setEditingPlanId(plan.id)
+    setPlanForm({
+      year: plan.year,
+      repeats_course: repeatsCourse,
+      diagnosis_snapshot: plan.diagnosis_snapshot || '',
+    })
+    setShowPlanModal(true)
+  }
+
+  function onClosePlanModal() {
+    setShowPlanModal(false)
+    setEditingPlanId(null)
+  }
+
+  async function onSavePlan(e) {
     e.preventDefault()
     if (!selectedStudent) return
 
+    const repeatsCourse = planCoursePreview.isFirstPlan
+      || !planCoursePreview.nextCourse
+      || Boolean(planForm.repeats_course)
+    const isEditing = Boolean(editingPlanId)
+
     try {
-      await api(`/students/${selectedStudent.id}/treatment-plans`, {
-        method: 'POST',
-        body: JSON.stringify({
-          year: Number(planForm.year),
-          repeats_course: planCoursePreview.isFirstPlan
-            || !planCoursePreview.nextCourse
-            || Boolean(planForm.repeats_course),
-        }),
-      })
+      await api(
+        isEditing
+          ? `/students/${selectedStudent.id}/treatment-plans/${editingPlanId}`
+          : `/students/${selectedStudent.id}/treatment-plans`,
+        {
+          method: isEditing ? 'PUT' : 'POST',
+          body: JSON.stringify({
+            year: Number(planForm.year),
+            repeats_course: repeatsCourse,
+            ...(isEditing ? { diagnosis_snapshot: planForm.diagnosis_snapshot } : {}),
+          }),
+        },
+      )
       await onSelectStudent(selectedStudent)
-      setShowPlanModal(false)
-      setStatus('Plan anual creado')
+      onClosePlanModal()
+      setStatus(isEditing ? 'Plan de tratamiento actualizado' : 'Plan anual creado')
     } catch (error) {
       setStatus(error.message)
     }
@@ -1522,8 +1769,8 @@ function App() {
         `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${planId}/consolidated-pdf`,
         { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
       )
-      if (!response.ok) throw new Error('No se pudo generar PDF consolidado')
-      const plan = plans.find((item) => item.id === planId)
+      if (!response.ok) throw new Error('No se pudo generar el PDF consolidado.')
+      const plan = plans.find((item) => item.id === planId) || selectedPlan
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1533,7 +1780,7 @@ function App() {
       window.URL.revokeObjectURL(url)
       setStatus('PDF consolidado descargado')
     } catch (error) {
-      setStatus(error.message)
+      setStatus(userFacingCaughtError(error, 'No se pudo generar el PDF consolidado.'))
     } finally {
       setIsGeneratingPdf(false)
     }
@@ -1544,6 +1791,10 @@ function App() {
     setSelectedPlan(plan)
     setActiveSection('sessions')
     setSessions([])
+    setTrashedSessions([])
+    setShowSessionTrash(false)
+    setSessionsLoadError('')
+    setIsLoadingSessions(true)
     setSessionRatingSeries([])
     setEditingSessionId(null)
     setSelectedSession(null)
@@ -1566,18 +1817,33 @@ function App() {
       status: 'pendiente',
     })
     try {
-      const data = await api(`/students/${selectedStudent.id}/treatment-plans/${plan.id}/sessions`)
+      const [data, trash] = await Promise.all([
+        api(`/students/${selectedStudent.id}/treatment-plans/${plan.id}/sessions`).then(asList),
+        api(`/students/${selectedStudent.id}/treatment-plans/${plan.id}/sessions/trash`).then(asList).catch(() => []),
+      ])
       setSessions(data)
-      if (data.length > 0) {
-        await onSelectSession(data[0])
-      } else {
-        setSelectedSession(null)
-        setSessionTasks([])
-        setSessionMaterials([])
-      }
+      setTrashedSessions(trash)
+      setSelectedSession(null)
+      setSessionTasks([])
+      setSessionMaterials([])
+      persistClinicalContext({ studentId: selectedStudent.id, planId: plan.id, sessionId: null })
     } catch (error) {
+      setSessionsLoadError(error.message)
       setStatus(error.message)
+    } finally {
+      setIsLoadingSessions(false)
     }
+  }
+
+  async function refreshPlanSessionLists(plan = selectedPlan) {
+    if (!selectedStudent || !plan) return []
+    const [data, trash] = await Promise.all([
+      api(`/students/${selectedStudent.id}/treatment-plans/${plan.id}/sessions`).then(asList),
+      api(`/students/${selectedStudent.id}/treatment-plans/${plan.id}/sessions/trash`).then(asList).catch(() => []),
+    ])
+    setSessions(data)
+    setTrashedSessions(trash)
+    return trash
   }
 
   async function onSaveSession(e) {
@@ -1629,17 +1895,85 @@ function App() {
     setShowSessionModal(true)
   }
 
-  async function onDeleteSession(sessionId) {
-    if (!selectedStudent || !selectedPlan) return
-    if (!window.confirm('Eliminar sesion?')) return
+  function onAskDeleteSession(session) {
+    setSessionPendingDelete(session)
+    setDeleteSessionMode('trash')
+    setDeleteSessionModalError('')
+    setShowDeleteSessionModal(true)
+  }
+
+  function onAskForceDeleteSession(session) {
+    setSessionPendingDelete(session)
+    setDeleteSessionMode('force')
+    setDeleteSessionModalError('')
+    setShowDeleteSessionModal(true)
+  }
+
+  function onCloseDeleteSessionModal() {
+    if (isDeletingSession) return
+    setShowDeleteSessionModal(false)
+  }
+
+  async function onConfirmDeleteSession() {
+    if (!selectedStudent || !selectedPlan || !sessionPendingDelete || isDeletingSession) return
+    const sessionId = sessionPendingDelete.id
+    const isForceDelete = deleteSessionMode === 'force'
+    setIsDeletingSession(true)
+    setDeleteSessionModalError('')
+
     try {
-      await api(`/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${sessionId}`, {
-        method: 'DELETE',
-      })
-      await onSelectPlan(selectedPlan)
-      setStatus('Sesion eliminada')
+      await api(
+        `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${sessionId}${isForceDelete ? '/force' : ''}`,
+        { method: 'DELETE' },
+      )
+      if (!isForceDelete && Number(selectedSession?.id) === Number(sessionId)) {
+        setSelectedSession(null)
+        setActiveSection('sessions')
+      }
+      const trash = await refreshPlanSessionLists()
+      if (isForceDelete && trash.length === 0) setShowSessionTrash(false)
+      setShowDeleteSessionModal(false)
+      setSessionPendingDelete(null)
+      setStatus(isForceDelete ? 'Sesión eliminada definitivamente' : 'Sesión enviada a la papelera')
     } catch (error) {
-      setStatus(error.message)
+      setDeleteSessionModalError(error.message || (isForceDelete
+        ? 'No se pudo eliminar la sesión de forma definitiva.'
+        : 'No se pudo enviar la sesión a la papelera.'))
+    } finally {
+      setIsDeletingSession(false)
+    }
+  }
+
+  function onAskRestoreSession(session) {
+    setSessionPendingRestore(session)
+    setRestoreSessionModalError('')
+    setShowRestoreSessionModal(true)
+  }
+
+  function onCloseRestoreSessionModal() {
+    if (isRestoringSession) return
+    setShowRestoreSessionModal(false)
+  }
+
+  async function onConfirmRestoreSession() {
+    if (!selectedStudent || !selectedPlan || !sessionPendingRestore || isRestoringSession) return
+    const sessionId = sessionPendingRestore.id
+    setIsRestoringSession(true)
+    setRestoreSessionModalError('')
+
+    try {
+      await api(`/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${sessionId}/restore`, {
+        method: 'POST',
+      })
+      const trash = await refreshPlanSessionLists()
+      if (trash.length === 0) setShowSessionTrash(false)
+      setShowRestoreSessionModal(false)
+      setSessionPendingRestore(null)
+      notifyUser('Sesión restaurada con éxito')
+    } catch (error) {
+      setRestoreSessionModalError(error.message || 'No se pudo restaurar la sesión.')
+    } finally {
+      setIsRestoringSession(false)
     }
   }
 
@@ -1652,7 +1986,7 @@ function App() {
         `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${sessionId}/pdf`,
         { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
       )
-      if (!response.ok) throw new Error('No se pudo generar PDF de sesion')
+      if (!response.ok) throw new Error('No se pudo generar el PDF de la sesión.')
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1662,7 +1996,7 @@ function App() {
       window.URL.revokeObjectURL(url)
       setStatus('PDF de sesion descargado')
     } catch (error) {
-      setStatus(error.message)
+      setStatus(userFacingCaughtError(error, 'No se pudo generar el PDF de la sesión.'))
     } finally {
       setIsGeneratingPdf(false)
     }
@@ -1688,8 +2022,8 @@ function App() {
         api(`/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/tasks`),
         api(`/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${session.id}/materials`),
       ])
-      setSessionTasks(tasksData)
-      setSessionMaterials(materialsData)
+      setSessionTasks(asList(tasksData))
+      setSessionMaterials(asList(materialsData))
     } catch (error) {
       setStatus(error.message)
     }
@@ -1698,6 +2032,7 @@ function App() {
   async function onSelectSession(session) {
     if (!selectedStudent || !selectedPlan) return
     setSelectedSession(session)
+    persistClinicalContext({ studentId: selectedStudent.id, planId: selectedPlan.id, sessionId: session.id })
     setActiveSection('sessionDetail')
     setEditingTaskId(null)
     setTaskForm({
@@ -1781,7 +2116,7 @@ function App() {
         `${apiBaseUrl}/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions/${selectedSession.id}/materials/${material.id}/download`,
         { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
       )
-      if (!response.ok) throw new Error('No se pudo descargar el material')
+      if (!response.ok) throw new Error('No se pudo descargar el material.')
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1791,7 +2126,7 @@ function App() {
       window.URL.revokeObjectURL(url)
       setStatus('Material descargado')
     } catch (error) {
-      setStatus(error.message)
+      setStatus(userFacingCaughtError(error, 'No se pudo descargar el material.'))
     }
   }
 
@@ -1832,7 +2167,7 @@ function App() {
       await Promise.all([
         loadMediaLibraryItems(),
         selectedSession ? loadSessionDetails(selectedSession) : Promise.resolve(),
-        selectedWorkshopCourse ? loadWorkshops(selectedWorkshopCourse.id) : Promise.resolve(),
+        selectedWorkshopCourse ? loadWorkshops(selectedWorkshopCourse.id, selectedWorkshopCourse.year) : Promise.resolve(),
       ])
       setStatus('Recurso eliminado de la biblioteca y de los vínculos en sesiones y talleres')
     } catch (error) {
@@ -1846,7 +2181,7 @@ function App() {
         `${apiBaseUrl}/media-library/${item.id}/download`,
         { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
       )
-      if (!response.ok) throw new Error('No se pudo descargar el recurso')
+      if (!response.ok) throw new Error('No se pudo descargar el recurso.')
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1856,79 +2191,111 @@ function App() {
       window.URL.revokeObjectURL(url)
       setStatus('Recurso descargado')
     } catch (error) {
-      setStatus(error.message)
+      setStatus(userFacingCaughtError(error, 'No se pudo descargar el recurso.'))
     }
   }
 
-  async function onSaveWorkshop(e) {
+  async function onSaveWorkshop(e, overrides = {}) {
     e.preventDefault()
-    if (!workshopForm.name.trim()) {
-      setStatus('El nombre del taller es obligatorio.')
+    const form = { ...workshopForm, ...overrides }
+    const wasEditing = Boolean(editingWorkshopId)
+    const actionLabel = wasEditing ? 'actualizar' : 'crear'
+    setWorkshopSubmitError('')
+    const name = String(form.name || '').trim()
+    const objective = String(form.objective || '').trim()
+    const description = String(form.description || '').trim()
+    const heldOn = workshopHeldOn(form.held_on)
+    const urls = asUrlList(form.urls)
+    const failSave = (detail) => {
+      const message = `No se pudo ${actionLabel} el taller. ${detail}`
+      setWorkshopSubmitError(message)
+      notifyUser(message, 'error')
       return false
     }
-    if (!workshopForm.school_course_id) {
-      setStatus('Selecciona el curso.')
-      return false
+    if (!name) {
+      return failSave('El nombre es obligatorio.')
     }
-    const creatingFromCourseList = !editingWorkshopId && !selectedWorkshopCourse && !workshopForm.fromExistingCourse
+    if (!form.school_course_id) {
+      return failSave('Selecciona el curso.')
+    }
+    if (!heldOn) {
+      return failSave('Selecciona la fecha de realización.')
+    }
+    const creatingFromCourseList = !wasEditing && !selectedWorkshopCourse && !form.fromExistingCourse
     if (creatingFromCourseList) {
-      const existingCourse = workshopCourses.find(
-        (course) => String(course.id) === String(workshopForm.school_course_id),
+      const existingCourse = findWorkshopCourseForYear(
+        workshopCourses,
+        form.school_course_id,
+        workshopHeldYear(heldOn),
       )
       if (existingCourse) {
         const count = Number(existingCourse.workshops_count || 0)
-        setStatus(
-          `Este curso ya está en tu listado y cuenta con ${count} ${count === 1 ? 'taller' : 'talleres'}. Entra al curso para registrar otro.`,
+        const yearLabel = existingCourse.year ? ` en ${existingCourse.year}` : ''
+        return failSave(
+          `Este curso ya está en tu listado${yearLabel} y cuenta con ${count} ${count === 1 ? 'taller' : 'talleres'}. Entra al curso para registrar otro.`,
         )
-        return false
       }
-    }
-    if (!workshopForm.held_on) {
-      setStatus('Selecciona la fecha de realización.')
-      return false
     }
 
     const formData = new FormData()
-    formData.append('name', workshopForm.name.trim())
-    formData.append('objective', workshopForm.objective.trim())
-    formData.append('description', workshopForm.description.trim())
-    formData.append('held_on', workshopForm.held_on)
-    formData.append('school_course_id', String(workshopForm.school_course_id))
-    if (workshopForm.media_library_item_id) {
-      formData.append('media_library_item_id', String(workshopForm.media_library_item_id))
-    } else if (workshopForm.file) {
-      const fileError = getWorkshopFileError(workshopForm.file)
+    formData.append('name', name)
+    formData.append('objective', objective)
+    formData.append('description', description)
+    formData.append('held_on', heldOn)
+    formData.append('school_course_id', String(form.school_course_id))
+    if (form.media_library_item_id) {
+      formData.append('media_library_item_id', String(form.media_library_item_id))
+    } else if (form.file) {
+      const fileError = getWorkshopFileError(form.file)
       if (fileError) {
-        setStatus(fileError)
-        return false
+        return failSave(fileError)
       }
-      formData.append('file', workshopForm.file)
+      formData.append('file', form.file)
     }
-    formData.append('urls', JSON.stringify(
-      (workshopForm.urls || []).map((url) => String(url).trim()).filter(Boolean),
-    ))
+    formData.append('urls', JSON.stringify(urls))
 
     try {
       setSavingWorkshop(true)
-      const path = editingWorkshopId ? `/workshops/${editingWorkshopId}` : '/workshops'
-      const savedWorkshop = await api(path, { method: 'POST', body: formData })
-      setWorkshopForm(emptyWorkshopForm({ held_on: workshopForm.held_on }))
+      const path = wasEditing ? `/workshops/${editingWorkshopId}` : '/workshops'
+      if (wasEditing) {
+        formData.append('_method', 'PUT')
+      }
+      const savedWorkshop = await api(path, { method: 'POST', body: formData, timeoutMs: 60000 })
+      let savedWorkshopId = savedWorkshop?.id ?? savedWorkshop?.data?.id ?? null
+      setWorkshopForm(emptyWorkshopForm({ held_on: heldOn }))
       setEditingWorkshopId(null)
+      setWorkshopSubmitError('')
       await Promise.all([loadWorkshopCourses(), loadMediaLibraryItems()])
       if (selectedWorkshopCourse) {
-        const stillSelected = selectedWorkshopCourse.id === Number(workshopForm.school_course_id)
-          || String(selectedWorkshopCourse.id) === String(workshopForm.school_course_id)
+        const stillSelected = selectedWorkshopCourse.id === Number(form.school_course_id)
+          || String(selectedWorkshopCourse.id) === String(form.school_course_id)
         if (stillSelected) {
-          await loadWorkshops(selectedWorkshopCourse.id)
+          const savedYear = workshopHeldYear(heldOn) || selectedWorkshopCourse.year
+          if (Number(selectedWorkshopCourse.year) !== Number(savedYear)) {
+            setSelectedWorkshopCourse({ ...selectedWorkshopCourse, year: savedYear })
+          }
+          const list = await loadWorkshops(selectedWorkshopCourse.id, savedYear)
+          if (!wasEditing && !savedWorkshopId) {
+            const match = list.find((item) => (
+              String(item.name || '') === name && workshopHeldOn(item.held_on) === heldOn
+            ))
+            savedWorkshopId = match?.id ?? list[0]?.id ?? null
+          }
         }
       }
-      if (savedWorkshop && selectedWorkshop && Number(savedWorkshop.id) === Number(selectedWorkshop.id)) {
-        setSelectedWorkshop(savedWorkshop)
+      if (savedWorkshop && selectedWorkshop && Number(savedWorkshopId) === Number(selectedWorkshop.id)) {
+        setSelectedWorkshop(savedWorkshop?.id ? savedWorkshop : savedWorkshop?.data)
       }
-      setStatus('Taller guardado')
+      const successMessage = wasEditing
+        ? 'El taller se actualizó correctamente.'
+        : 'El taller se creó correctamente.'
+      notifyUser(successMessage, 'success')
       return true
     } catch (error) {
-      setStatus(error.message)
+      const detail = userFacingCaughtError(error, 'Inténtalo de nuevo.')
+      const message = `No se pudo ${actionLabel} el taller. ${detail}`
+      setWorkshopSubmitError(message)
+      notifyUser(message, 'error')
       return false
     } finally {
       setSavingWorkshop(false)
@@ -1941,12 +2308,12 @@ function App() {
       name: workshop.name || '',
       objective: workshop.objective || '',
       description: workshop.description || '',
-      held_on: String(workshop.held_on || '').slice(0, 10),
+      held_on: workshopHeldOn(workshop.held_on),
       school_level_id: String(workshop.course?.school_level_id || selectedWorkshopCourse?.school_level_id || ''),
       school_course_id: String(workshop.school_course_id || selectedWorkshopCourse?.id || ''),
       file: null,
       media_library_item_id: workshop.media_library_item_id ? String(workshop.media_library_item_id) : '',
-      urls: Array.isArray(workshop.urls) ? workshop.urls : [],
+      urls: asUrlList(workshop.urls),
       fromExistingCourse: true,
     })
   }
@@ -1964,18 +2331,27 @@ function App() {
     try {
       await api(`/workshops/${workshopPendingDelete.id}`, { method: 'DELETE' })
       await Promise.all([loadWorkshopCourses(), loadMediaLibraryItems()])
+      let yearStillHasWorkshops = true
       if (selectedWorkshopCourse) {
-        await loadWorkshops(selectedWorkshopCourse.id)
+        const remaining = await loadWorkshops(selectedWorkshopCourse.id, selectedWorkshopCourse.year)
+        if (Array.isArray(remaining) && remaining.length === 0) {
+          yearStillHasWorkshops = false
+          setSelectedWorkshopCourse(null)
+          setSelectedWorkshop(null)
+          setActiveSection('workshops')
+        }
       }
-      if (selectedWorkshop && Number(selectedWorkshop.id) === Number(workshopPendingDelete.id)) {
+      if (yearStillHasWorkshops && selectedWorkshop && Number(selectedWorkshop.id) === Number(workshopPendingDelete.id)) {
         setSelectedWorkshop(null)
         setActiveSection('workshopCourse')
       }
       setShowDeleteWorkshopModal(false)
       setWorkshopPendingDelete(null)
-      setStatus('Taller eliminado')
+      notifyUser('El taller se eliminó correctamente.', 'success')
     } catch (error) {
-      setDeleteWorkshopModalError(error.message || 'No se pudo eliminar el taller.')
+      const message = userFacingCaughtError(error, 'No se pudo eliminar el taller.')
+      setDeleteWorkshopModalError(message)
+      notifyUser(message, 'error')
     } finally {
       setIsDeletingWorkshop(false)
     }
@@ -1987,7 +2363,7 @@ function App() {
         `${apiBaseUrl}/workshops/${workshop.id}/download`,
         { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
       )
-      if (!response.ok) throw new Error('No se pudo descargar el material del taller')
+      if (!response.ok) throw new Error('No se pudo descargar el material del taller.')
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -1997,7 +2373,7 @@ function App() {
       window.URL.revokeObjectURL(url)
       setStatus('Material del taller descargado')
     } catch (error) {
-      setStatus(error.message)
+      setStatus(userFacingCaughtError(error, 'No se pudo descargar el material del taller.'))
     }
   }
 
@@ -2007,6 +2383,7 @@ function App() {
     setWorkshopForm(emptyWorkshopForm({
       school_level_id: String(course.school_level_id || course.level?.id || ''),
       school_course_id: String(course.id),
+      held_on: defaultHeldOnForWorkshopYear(course),
     }))
     setActiveSection('workshopCourse')
   }
@@ -2138,9 +2515,9 @@ function App() {
       )
       setSelectedSession(updatedSession)
       setSessionObservation(updatedSession.general_observation || '')
-      const refreshedSessions = await api(
+      const refreshedSessions = asList(await api(
         `/students/${selectedStudent.id}/treatment-plans/${selectedPlan.id}/sessions`,
-      )
+      ))
       setSessions(refreshedSessions)
       setActiveSection('sessionDetail')
       notifyUser(successMessage, 'success')
@@ -2300,15 +2677,27 @@ function App() {
 
   const selectedLevel = levels.find((level) => String(level.id) === String(studentForm.school_level_id))
   const availableCourses = selectedLevel?.courses ?? []
+  const studentContextPlan = useMemo(() => {
+    if (selectedPlan && plans.some((plan) => Number(plan.id) === Number(selectedPlan.id))) {
+      return selectedPlan
+    }
+    return [...plans].sort((a, b) => Number(b.year) - Number(a.year))[0] || null
+  }, [selectedPlan, plans])
+  const plansForCoursePreview = useMemo(
+    () => (editingPlanId
+      ? plans.filter((plan) => Number(plan.id) !== Number(editingPlanId))
+      : plans),
+    [plans, editingPlanId],
+  )
   const planCoursePreview = useMemo(
     () => getPlanCoursePreview(
       levels,
       selectedStudent,
-      plans,
+      plansForCoursePreview,
       planForm.year,
       Boolean(planForm.repeats_course),
     ),
-    [levels, selectedStudent, plans, planForm.year, planForm.repeats_course],
+    [levels, selectedStudent, plansForCoursePreview, planForm.year, planForm.repeats_course],
   )
   const studentCourseOptions = useMemo(() => {
     const uniqueCourses = new Map()
@@ -2361,12 +2750,13 @@ function App() {
     const start = (safePlansPage - 1) * PAGE_SIZE
     return plans.slice(start, start + PAGE_SIZE)
   }, [plans, safePlansPage])
-  const sessionsTotalPages = Math.max(1, Math.ceil(sessions.length / PAGE_SIZE))
+  const visibleSessions = showSessionTrash ? trashedSessions : sessions
+  const sessionsTotalPages = Math.max(1, Math.ceil(visibleSessions.length / PAGE_SIZE))
   const safeSessionsPage = Math.min(sessionsPage, sessionsTotalPages)
   const paginatedSessions = useMemo(() => {
     const start = (safeSessionsPage - 1) * PAGE_SIZE
-    return sessions.slice(start, start + PAGE_SIZE)
-  }, [sessions, safeSessionsPage])
+    return visibleSessions.slice(start, start + PAGE_SIZE)
+  }, [visibleSessions, safeSessionsPage])
   const MONTH_SHORT_LABELS = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC']
   const MONTH_SHORT_SLUGS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
   const formatDisplayDate = (dateValue) => {
@@ -2489,6 +2879,9 @@ function App() {
   )
   const planRatedTasksTotal =
     planTaskRatingTotals.con_dificultad + planTaskRatingTotals.por_lograr + planTaskRatingTotals.logrado
+  const sessionProgressById = Object.fromEntries(
+    sessionRatingSeries.map((entry) => [String(entry.sessionId), entry]),
+  )
   const taskRatingSegments = (() => {
     if (planRatedTasksTotal <= 0) return []
     const raw = [
@@ -2744,9 +3137,9 @@ function App() {
         </div>
       )}
       {toast.show && (
-        <div className="fixed right-4 top-4 z-[70]">
+        <div className="fixed right-4 top-4 z-[90] max-w-sm">
           <div
-            className={`min-w-[280px] rounded-[5px] border px-4 py-3 text-sm shadow-lg ${
+            className={`rounded-[5px] border px-4 py-3 text-sm shadow-lg ${
               toast.type === 'success'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                 : 'border-red-200 bg-red-50 text-red-800'
@@ -2754,7 +3147,10 @@ function App() {
             role="alert"
             aria-live="assertive"
           >
-            {toast.message}
+            <p className="font-semibold">
+              {toast.type === 'success' ? 'Listo' : 'No se pudo completar'}
+            </p>
+            <p className="mt-0.5">{toast.message}</p>
           </div>
         </div>
       )}
@@ -2869,7 +3265,10 @@ function App() {
                 {selectedStudent && (
                   <button
                     className={`sidebarNavItem ${activeSection === 'studentPlans' ? 'sidebarNavItemActive' : ''}`}
-                    onClick={() => setActiveSection('studentPlans')}
+                    onClick={() => {
+                      setActiveSection('studentPlans')
+                      reloadTreatmentPlans()
+                    }}
                   >
                     <span className="sidebarNavItemContent">
                       <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -2882,7 +3281,7 @@ function App() {
                 {selectedPlan && (
                   <button
                     className={`sidebarNavItem ${activeSection === 'sessions' ? 'sidebarNavItemActive' : ''}`}
-                    onClick={() => setActiveSection('sessions')}
+                    onClick={() => (selectedPlan ? onSelectPlan(selectedPlan) : setActiveSection('sessions'))}
                   >
                     <span className="sidebarNavItemContent">
                       <svg className="sidebarNavItemIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -3189,6 +3588,8 @@ function App() {
                 onOpenCourse={onOpenWorkshopCourse}
                 formatDisplayDate={formatDisplayDate}
                 savingWorkshop={savingWorkshop}
+                submitError={workshopSubmitError}
+                onClearSubmitError={() => setWorkshopSubmitError('')}
                 mediaLibraryItems={mediaLibraryItems}
               />
             )}
@@ -3209,6 +3610,8 @@ function App() {
                 onViewWorkshop={onOpenWorkshopDetail}
                 formatDisplayDate={formatDisplayDate}
                 savingWorkshop={savingWorkshop}
+                submitError={workshopSubmitError}
+                onClearSubmitError={() => setWorkshopSubmitError('')}
                 mediaLibraryItems={mediaLibraryItems}
               />
             )}
@@ -3228,6 +3631,8 @@ function App() {
                 setEditingWorkshopId={setEditingWorkshopId}
                 onSaveWorkshop={onSaveWorkshop}
                 savingWorkshop={savingWorkshop}
+                submitError={workshopSubmitError}
+                onClearSubmitError={() => setWorkshopSubmitError('')}
                 mediaLibraryItems={mediaLibraryItems}
               />
             )}
@@ -3264,11 +3669,11 @@ function App() {
                   <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
                     <thead className="bg-slate-50">
                       <tr>
-                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Vista previa</th>
-                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Título</th>
-                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Archivo</th>
-                        <th className="px-3 py-2 text-left font-semibold text-slate-600">Uso</th>
-                        <th className="px-3 py-2 text-right font-semibold text-slate-600">Opciones</th>
+                        <th className="px-3 py-2 text-left font-bold text-slate-900">Vista previa</th>
+                        <th className="px-3 py-2 text-left font-bold text-slate-900">Título</th>
+                        <th className="px-3 py-2 text-left font-bold text-slate-900">Archivo</th>
+                        <th className="px-3 py-2 text-left font-bold text-slate-900">Uso</th>
+                        <th className="px-3 py-2 text-right font-bold text-slate-900">Opciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -3289,12 +3694,16 @@ function App() {
                           </td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap justify-end gap-2">
-                              <button type="button" className="actionButton" onClick={() => onDownloadMediaLibraryItem(item)}>
-                                Descargar
-                              </button>
-                              <button type="button" className="actionButton" onClick={() => onDeleteMediaLibraryItem(item)}>
-                                Eliminar
-                              </button>
+                              <IconActionButton
+                                variant="download"
+                                label="Descargar"
+                                onClick={() => onDownloadMediaLibraryItem(item)}
+                              />
+                              <IconActionButton
+                                variant="delete"
+                                label="Eliminar"
+                                onClick={() => onDeleteMediaLibraryItem(item)}
+                              />
                             </div>
                           </td>
                         </tr>
@@ -3311,7 +3720,7 @@ function App() {
                   <div className="mb-3 flex items-center justify-between">
                     <h2 className="sectionTitle mb-0">Estudiantes</h2>
                     <button className="actionButton actionButtonPrimary" onClick={onOpenCreateStudentModal}>
-                      Registrar estudiante
+                      <ButtonLabel icon={<PlusIcon />}>Registrar estudiante</ButtonLabel>
                     </button>
                   </div>
                   <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-3">
@@ -3342,11 +3751,11 @@ function App() {
                     <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
                       <thead className="bg-slate-50">
                         <tr>
-                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Estudiante</th>
-                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Curso</th>
-                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Diagnóstico</th>
-                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Apoderado</th>
-                          <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-900">Estudiante</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-900">Curso</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-900">Diagnóstico</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-900">Apoderado</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-900">Opciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -3377,21 +3786,9 @@ function App() {
                               <p className="text-xs text-slate-500">{student.guardian_email}</p>
                             </td>
                             <td className="px-3 py-3">
-                              <div className="flex flex-wrap justify-end gap-2">
+                              <div className="flex flex-nowrap items-center justify-end gap-2">
                                 <button
-                                  className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
-                                  onClick={() => onEditStudent(student)}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M12 20h9" strokeLinecap="round" />
-                                      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
-                                    </svg>
-                                    <span>Editar</span>
-                                  </span>
-                                </button>
-                                <button
-                                  className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+                                  className="shrink-0 whitespace-nowrap rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
                                   onClick={() => onSelectStudent(student)}
                                 >
                                   <span className="inline-flex items-center gap-1.5">
@@ -3402,18 +3799,16 @@ function App() {
                                     <span>Planes de tratamiento</span>
                                   </span>
                                 </button>
-                                <button
-                                  className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                <IconActionButton
+                                  variant="edit"
+                                  label="Editar"
+                                  onClick={() => onEditStudent(student)}
+                                />
+                                <IconActionButton
+                                  variant="delete"
+                                  label="Eliminar"
                                   onClick={() => onDeleteStudent(student.id)}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M3 6h18" strokeLinecap="round" />
-                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
-                                    </svg>
-                                    <span>Eliminar</span>
-                                  </span>
-                                </button>
+                                />
                               </div>
                             </td>
                           </tr>
@@ -3433,7 +3828,11 @@ function App() {
             )}
             {activeSection === 'studentPlans' && selectedStudent && (
               <section className="space-y-4">
-                <StudentContextCard student={selectedStudent} />
+                <StudentContextCard
+                  student={selectedStudent}
+                  planYear={studentContextPlan?.year}
+                  courseLabel={planCourseDisplayName(studentContextPlan, selectedStudent)}
+                />
 
                 <section className="sectionCard">
                   <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -3445,10 +3844,10 @@ function App() {
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
                       <button className="actionButton actionButtonPrimary" onClick={onOpenCreatePlanModal}>
-                        Crear plan
+                        <ButtonLabel icon={<PlusIcon />}>Crear plan</ButtonLabel>
                       </button>
                       <button className="actionButton" onClick={() => setActiveSection('students')}>
-                        Volver a estudiantes
+                        <ButtonLabel icon={<BackIcon />}>Volver a estudiantes</ButtonLabel>
                       </button>
                     </div>
                   </div>
@@ -3457,40 +3856,56 @@ function App() {
                     <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
                       <thead className="bg-slate-50">
                         <tr>
-                          <th className="w-28 px-4 py-3 text-left font-semibold text-slate-600">Año</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Curso del estudiante</th>
-                          <th className="px-4 py-3 text-left font-semibold text-slate-600">Diagnóstico del plan</th>
-                          <th className="min-w-[18rem] whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-600">Acciones</th>
+                          <th className="w-28 px-6 py-3 text-left font-bold text-slate-900">Año</th>
+                          <th className="px-6 py-3 text-left font-bold text-slate-900">Curso del estudiante</th>
+                          <th className="px-6 py-3 text-left font-bold text-slate-900">Diagnóstico del plan</th>
+                          <th className="min-w-[14rem] px-6 py-3 text-left font-bold text-slate-900">Logro</th>
+                          <th className="whitespace-nowrap px-6 py-3 text-right font-bold text-slate-900">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {plans.length === 0 && (
                           <tr>
-                            <td colSpan={4} className="px-4 py-10 text-center">
-                              <p className="font-medium text-slate-700">Sin planes de tratamiento</p>
-                              <p className="mt-1 text-sm text-slate-500">
-                                Crea el primer plan para comenzar a registrar sesiones.
-                              </p>
-                              <button
-                                type="button"
-                                className="actionButton actionButtonPrimary mt-4"
-                                onClick={onOpenCreatePlanModal}
-                              >
-                                Crear plan de tratamiento
-                              </button>
+                            <td colSpan={5} className="px-6 py-10 text-center">
+                              {plansLoadError ? (
+                                <>
+                                  <p className="font-medium text-slate-700">No se pudieron cargar los planes</p>
+                                  <p className="mt-1 text-sm text-red-600">{plansLoadError}</p>
+                                </>
+                              ) : (
+                                <>
+                                  <p className="font-medium text-slate-700">Sin planes de tratamiento</p>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    Crea el primer plan para comenzar a registrar sesiones.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    className="actionButton actionButtonPrimary mt-4"
+                                    onClick={onOpenCreatePlanModal}
+                                  >
+                                    <ButtonLabel icon={<PlusIcon />}>Crear plan de tratamiento</ButtonLabel>
+                                  </button>
+                                </>
+                              )}
                             </td>
                           </tr>
                         )}
                         {paginatedPlans.map((plan) => (
                           <tr key={plan.id} className="transition hover:bg-violet-50/40">
-                            <td className="px-4 py-3">
+                            <td className="px-6 py-3">
                               <span className="inline-flex min-w-[3rem] items-center justify-center rounded-full bg-violet-100 px-3 py-1 text-sm font-semibold text-violet-900">
                                 {plan.year}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-slate-700">{plan.course?.display_name || 'Sin curso'}</td>
-                            <td className="px-4 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
-                            <td className="whitespace-nowrap px-4 py-3">
+                            <td className="px-6 py-3 text-slate-700">{planCourseDisplayName(plan, selectedStudent)}</td>
+                            <td className="px-6 py-3 text-slate-700">{plan.diagnosis_snapshot}</td>
+                            <td className="min-w-[14rem] px-6 py-3">
+                              <TaskProgressBar
+                                percent={plan.progress_percent}
+                                taskCount={plan.rated_tasks_count}
+                              />
+                            </td>
+                            <td className="whitespace-nowrap px-6 py-3">
                               <div className="flex flex-nowrap items-center justify-end gap-2">
                                 <button
                                   className="shrink-0 rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
@@ -3501,34 +3916,25 @@ function App() {
                                       <rect x="3" y="5" width="18" height="16" rx="2" />
                                       <path d="M8 3v4M16 3v4M3 10h18" strokeLinecap="round" />
                                     </svg>
-                                    <span>Sesiones</span>
+                                    <span>Sesiones{planSessionsCount(plan) == null ? '' : ` (${planSessionsCount(plan)})`}</span>
                                   </span>
                                 </button>
-                                <button
-                                  className="shrink-0 rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                <IconActionButton
+                                  variant="edit"
+                                  label="Editar"
+                                  onClick={() => onOpenEditPlanModal(plan)}
+                                />
+                                <IconActionButton
+                                  variant="download"
+                                  label="Descargar PDF"
                                   onClick={() => onDownloadPlanConsolidatedPdf(plan.id)}
                                   disabled={isGeneratingPdf}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
-                                      <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
-                                    </svg>
-                                    <span>PDF</span>
-                                  </span>
-                                </button>
-                                <button
-                                  className="shrink-0 rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                />
+                                <IconActionButton
+                                  variant="delete"
+                                  label="Eliminar"
                                   onClick={() => onAskDeletePlan(plan)}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M3 6h18" strokeLinecap="round" />
-                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
-                                    </svg>
-                                    <span>Eliminar</span>
-                                  </span>
-                                </button>
+                                />
                               </div>
                             </td>
                           </tr>
@@ -3547,24 +3953,47 @@ function App() {
             )}
             {activeSection === 'sessions' && selectedStudent && selectedPlan && (
               <section className="space-y-4">
-                <StudentContextCard student={selectedStudent} planYear={selectedPlan.year} courseLabel={selectedPlan.course?.display_name} />
+                <StudentContextCard
+                  student={selectedStudent}
+                  planYear={selectedPlan.year}
+                  courseLabel={planCourseDisplayName(selectedPlan, selectedStudent)}
+                  actions={(
+                    <>
+                      {!showSessionTrash && (
+                        <button className="actionButton actionButtonPrimary" onClick={onOpenCreateSessionModal}>
+                          <ButtonLabel icon={<PlusIcon />}>Agendar sesión</ButtonLabel>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="actionButton"
+                        onClick={() => setShowSessionTrash((prev) => !prev)}
+                      >
+                        {showSessionTrash
+                          ? <ButtonLabel icon={<BackIcon />}>Volver a sesiones</ButtonLabel>
+                          : `Papelera (${trashedSessions.length})`}
+                      </button>
+                      <button
+                        className="actionButton"
+                        onClick={() => {
+                          setActiveSection('studentPlans')
+                          reloadTreatmentPlans()
+                        }}
+                      >
+                        <ButtonLabel icon={<BackIcon />}>Volver a planes de tratamiento</ButtonLabel>
+                      </button>
+                    </>
+                  )}
+                />
+                {sessionsLoadError && (
+                  <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    No se pudieron cargar las sesiones. {sessionsLoadError}
+                  </p>
+                )}
 
                 <section className="sectionCard">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="sectionTitle mb-0">Sesiones del plan de tratamiento {selectedPlan.year}</h2>
-                  <div className="flex items-center gap-2">
-                    <button className="actionButton actionButtonPrimary" onClick={onOpenCreateSessionModal}>
-                      Agendar sesión
-                    </button>
-                    <button className="actionButton" onClick={() => setActiveSection('studentPlans')}>
-                      Volver a planes de tratamiento
-                    </button>
-                  </div>
-                </div>
-
-                <section className="rounded-[5px] border border-slate-200 bg-slate-50 p-4">
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
-                    <article className="rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <article className="rounded-[16px] border border-slate-200 bg-slate-50/70 p-4">
                       <h3 className="text-base font-semibold text-slate-900">Indicadores</h3>
                       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="rounded-[5px] border border-slate-200 bg-slate-50 p-3">
@@ -3641,15 +4070,15 @@ function App() {
                       </div>
                     </article>
 
-                    <article className="flex min-w-0 flex-col rounded-[5px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <article className="flex min-w-0 flex-col rounded-[16px] border border-slate-200 bg-slate-50/70 p-4">
                       <h3 className="text-base font-semibold text-slate-900">Gráfico de sesiones</h3>
                       <p className="mt-1 text-xs text-slate-500">
-                        Progreso por sesiones realizadas y marcas de días suspendidos en la misma línea de tiempo.
+                        Logro por sesiones realizadas y marcas de días suspendidos en la misma línea de tiempo.
                       </p>
                       <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate-600">
                         <span className="inline-flex items-center gap-1.5">
                           <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#a21caf]" />
-                          Sesión realizada (progreso %)
+                          Sesión realizada (logro %)
                         </span>
                         <span className="inline-flex items-center gap-1.5">
                           <span className="inline-block h-2.5 w-2.5 rotate-45 bg-amber-500" />
@@ -3675,7 +4104,7 @@ function App() {
                               className="session-chart min-w-[640px]"
                               viewBox={`0 0 ${chartWidth} ${chartHeight}`}
                               role="img"
-                              aria-label="Gráfico lineal de progreso y suspensiones por sesión"
+                              aria-label="Gráfico lineal de logro y suspensiones por sesión"
                             >
                               <line x1={chartPadding} y1={chartHeight - chartPadding} x2={chartWidth - chartPadding} y2={chartHeight - chartPadding} stroke="#cbd5e1" strokeWidth="1" />
                               <line x1={chartPadding} y1={chartPadding} x2={chartPadding} y2={chartHeight - chartPadding} stroke="#cbd5e1" strokeWidth="1" />
@@ -3748,20 +4177,59 @@ function App() {
                   </div>
                 </section>
 
-                <div className="mt-8 overflow-x-auto rounded-[5px] border border-slate-200">
+                <section className="sectionCard">
+                  <div className={`flex flex-wrap items-center justify-between gap-2 ${showSessionTrash ? 'mb-3' : 'mb-0'}`}>
+                    <h3 className="sectionTitle mb-0">
+                      {showSessionTrash ? 'Papelera de sesiones' : 'Sesiones'}
+                    </h3>
+                    {!showSessionTrash && (
+                      <button
+                        type="button"
+                        className="actionButton"
+                        onClick={() => onDownloadPlanConsolidatedPdf(selectedPlan.id)}
+                        disabled={isGeneratingPdf}
+                      >
+                        <ButtonLabel icon={<DownloadIcon />}>
+                          {isGeneratingPdf ? 'Generando PDF...' : 'PDF consolidado'}
+                        </ButtonLabel>
+                      </button>
+                    )}
+                  </div>
+                  {!showSessionTrash && (
+                    <p className="mb-3 mt-1 text-base font-normal text-slate-500">
+                      Registro histórico con evolución, tareas y evaluación por objetivos.
+                    </p>
+                  )}
+                  <div className="overflow-x-auto border-y border-slate-200">
                   <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
                     <thead className="bg-slate-50">
                       <tr>
-                        <th className="w-36 whitespace-nowrap px-3 py-3 text-left font-semibold text-slate-600">Fecha</th>
-                        <th className="px-3 py-3 text-left font-semibold text-slate-600">Objetivo</th>
-                        <th className="whitespace-nowrap px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                        <th className="w-40 whitespace-nowrap px-6 py-3 text-left font-bold text-slate-900">Fecha</th>
+                        <th className="px-6 py-3 text-left font-bold text-slate-900">Objetivo</th>
+                        <th className="min-w-[14rem] px-6 py-3 text-left font-bold text-slate-900">Logro</th>
+                        <th className="whitespace-nowrap px-6 py-3 text-right font-bold text-slate-900">Opciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {sessions.length === 0 && (
+                      {visibleSessions.length === 0 && (
                         <tr>
-                          <td colSpan={3} className="px-3 py-6 text-center text-slate-500">
-                            No hay sesiones registradas para este plan de tratamiento.
+                          <td colSpan={4} className="px-6 py-6 text-center text-slate-500">
+                            {isLoadingSessions
+                              ? 'Cargando sesiones...'
+                              : sessionsLoadError
+                                ? `No se pudieron cargar las sesiones. ${sessionsLoadError}`
+                                : showSessionTrash
+                                  ? 'La papelera de este plan está vacía.'
+                                  : (
+                                    <>
+                                      No hay sesiones registradas para este plan de tratamiento.
+                                      {plans.some((plan) => Number(plan.id) !== Number(selectedPlan?.id) && Number(plan.sessions_count) > 0) ? (
+                                        <span className="mt-2 block text-slate-600">
+                                          Hay sesiones en otro plan anual. Vuelve a planes y entra al que indique Sesiones (n).
+                                        </span>
+                                      ) : null}
+                                    </>
+                                  )}
                           </td>
                         </tr>
                       )}
@@ -3776,7 +4244,7 @@ function App() {
 
                         return (
                           <tr key={session.id} className="hover:bg-slate-50">
-                            <td className="w-36 whitespace-nowrap px-3 py-3 text-slate-700">
+                            <td className="w-40 whitespace-nowrap px-6 py-3 text-slate-700">
                               {sessionStatus === 'suspendida' ? (
                                 <HoverTooltip
                                   text={suspensionDetail}
@@ -3793,9 +4261,34 @@ function App() {
                               <div className="mt-1 font-bold">{formatDisplayDate(session.session_date)}</div>
                               <div className="text-xs text-slate-500">{formatDisplayTime(session.session_time)} Hrs.</div>
                             </td>
-                            <td className="px-3 py-3 text-slate-700">{session.objective}</td>
-                            <td className="px-3 py-3">
+                            <td className="px-6 py-3 text-slate-700">{session.objective}</td>
+                            <td className="min-w-[14rem] px-6 py-3">
+                              <TaskProgressBar
+                                percent={sessionProgressById[String(session.id)]?.performancePercent}
+                                taskCount={sessionProgressById[String(session.id)]?.ratedTasksCount}
+                              />
+                            </td>
+                            <td className="px-6 py-3">
                               <div className="flex flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
+                                {showSessionTrash ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="rounded-[5px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100"
+                                      onClick={() => onAskRestoreSession(session)}
+                                    >
+                                      Restaurar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                      onClick={() => onAskForceDeleteSession(session)}
+                                    >
+                                      Eliminar definitivo
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
                                 <button
                                   type="button"
                                   className={getSessionEntryActionClass(session.status)}
@@ -3818,50 +4311,28 @@ function App() {
                                   </span>
                                 </button>
                                 {(sessionStatus === 'pendiente' || sessionStatus === 'finalizada') && (
-                                  <button
-                                    type="button"
-                                    className="rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100"
+                                  <IconActionButton
+                                    variant="edit"
+                                    label="Editar"
                                     onClick={() => onEditSession(session)}
-                                  >
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                        <path d="M12 20h9" strokeLinecap="round" />
-                                        <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
-                                      </svg>
-                                      <span>Editar</span>
-                                    </span>
-                                  </button>
+                                  />
                                 )}
                                 {sessionStatus === 'finalizada' && (
-                                  <button
-                                    type="button"
-                                    className="rounded-[5px] border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-xs font-medium text-purple-800 transition hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                  <IconActionButton
+                                    variant="download"
+                                    label="Descargar PDF"
                                     onClick={() => onDownloadSessionPdf(session.id)}
                                     disabled={isGeneratingPdf}
-                                  >
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
-                                        <path d="M14 3v5h5M8 14h8M8 18h5" strokeLinecap="round" />
-                                      </svg>
-                                      <span>PDF</span>
-                                    </span>
-                                  </button>
+                                  />
                                 )}
                                 {sessionStatus === 'pendiente' && (
-                                  <button
-                                    type="button"
-                                    className="rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100"
-                                    onClick={() => onDeleteSession(session.id)}
-                                  >
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                        <path d="M3 6h18" strokeLinecap="round" />
-                                        <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
-                                      </svg>
-                                      <span>Eliminar</span>
-                                    </span>
-                                  </button>
+                                  <IconActionButton
+                                    variant="delete"
+                                    label="Eliminar"
+                                    onClick={() => onAskDeleteSession(session)}
+                                  />
+                                )}
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -3870,14 +4341,13 @@ function App() {
                       })}
                     </tbody>
                   </table>
-                </div>
-                {sessions.length > PAGE_SIZE && renderPagination(
+                  </div>
+                {visibleSessions.length > PAGE_SIZE && renderPagination(
                   safeSessionsPage,
                   sessionsTotalPages,
                   () => setSessionsPage((prev) => Math.max(1, prev - 1)),
                   () => setSessionsPage((prev) => Math.min(sessionsTotalPages, prev + 1)),
                 )}
-
                 </section>
               </section>
             )}
@@ -3904,7 +4374,7 @@ function App() {
                     </p>
                   </div>
                   <button type="button" className="actionButton cursor-pointer" onClick={() => setActiveSection('sessions')}>
-                    Volver a sesiones
+                    <ButtonLabel icon={<BackIcon />}>Volver a sesiones</ButtonLabel>
                   </button>
                 </div>
 
@@ -3929,7 +4399,7 @@ function App() {
                       onClick={onOpenCreateTaskModal}
                       disabled={selectedSession.status === 'finalizada'}
                     >
-                      Crear tarea
+                      <ButtonLabel icon={<PlusIcon />}>Crear tarea</ButtonLabel>
                     </button>
                     <button
                       type="button"
@@ -3947,10 +4417,10 @@ function App() {
                     <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
                       <thead className="bg-slate-50">
                         <tr>
-                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Tarea</th>
-                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Descripción</th>
-                          <th className="px-3 py-3 text-left font-semibold text-slate-600">Calificación</th>
-                          <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-900">Tarea</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-900">Descripción</th>
+                          <th className="px-3 py-3 text-left font-bold text-slate-900">Calificación</th>
+                          <th className="px-3 py-3 text-right font-bold text-slate-900">Opciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -3990,38 +4460,18 @@ function App() {
                             </td>
                             <td className="px-3 py-3">
                               <div className="flex flex-wrap justify-end gap-2">
-                                <button
-                                  type="button"
-                                  className={`rounded-[5px] border border-fuchsia-200 bg-fuchsia-50 px-2.5 py-1.5 text-xs font-medium text-fuchsia-800 transition hover:bg-fuchsia-100 ${
-                                    selectedSession.status === 'finalizada' ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                                  }`}
+                                <IconActionButton
+                                  variant="edit"
+                                  label="Editar"
                                   onClick={() => onOpenEditSessionTask(task)}
                                   disabled={selectedSession.status === 'finalizada'}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M12 20h9" strokeLinecap="round" />
-                                      <path d="m16.5 3.5 4 4L8 20H4v-4L16.5 3.5Z" strokeLinejoin="round" />
-                                    </svg>
-                                    <span>Editar</span>
-                                  </span>
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`rounded-[5px] border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-100 ${
-                                    selectedSession.status === 'finalizada' ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                                  }`}
+                                />
+                                <IconActionButton
+                                  variant="delete"
+                                  label="Eliminar"
                                   onClick={() => onDeleteSessionTask(task.id)}
                                   disabled={selectedSession.status === 'finalizada'}
-                                >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                                      <path d="M3 6h18" strokeLinecap="round" />
-                                      <path d="M8 6V4h8v2M6 6l1 14h10l1-14" strokeLinejoin="round" />
-                                    </svg>
-                                    <span>Eliminar</span>
-                                  </span>
-                                </button>
+                                />
                               </div>
                             </td>
                           </tr>
@@ -4097,10 +4547,10 @@ function App() {
                     <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
                       <thead className="bg-slate-50">
                         <tr>
-                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Título</th>
-                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Archivo</th>
-                          <th className="px-3 py-2 text-left font-semibold text-slate-600">Peso</th>
-                          <th className="px-3 py-2 text-right font-semibold text-slate-600">Opciones</th>
+                          <th className="px-3 py-2 text-left font-bold text-slate-900">Título</th>
+                          <th className="px-3 py-2 text-left font-bold text-slate-900">Archivo</th>
+                          <th className="px-3 py-2 text-left font-bold text-slate-900">Peso</th>
+                          <th className="px-3 py-2 text-right font-bold text-slate-900">Opciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -4118,17 +4568,17 @@ function App() {
                             <td className="px-3 py-2 text-slate-700">{Math.max(1, Math.round((material.size_bytes || 0) / 1024))} KB</td>
                             <td className="px-3 py-2">
                               <div className="flex flex-wrap justify-end gap-2">
-                                <button type="button" className="actionButton" onClick={() => onDownloadSessionMaterial(material)}>
-                                  Descargar
-                                </button>
-                                <button
-                                  type="button"
-                                  className="actionButton"
+                                <IconActionButton
+                                  variant="download"
+                                  label="Descargar"
+                                  onClick={() => onDownloadSessionMaterial(material)}
+                                />
+                                <IconActionButton
+                                  variant="delete"
+                                  label="Eliminar"
                                   onClick={() => onDeleteSessionMaterial(material.id)}
                                   disabled={selectedSession.status === 'finalizada'}
-                                >
-                                  Eliminar
-                                </button>
+                                />
                               </div>
                             </td>
                           </tr>
@@ -4606,6 +5056,150 @@ function App() {
                 </div>
               </div>
             )}
+            {isDeleteSessionModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showDeleteSessionModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget && !isDeletingSession) {
+                    onCloseDeleteSessionModal()
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-lg rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showDeleteSessionModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">
+                        {deleteSessionMode === 'force' ? 'Eliminar sesión definitivamente' : 'Eliminar sesión'}
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {sessionPendingDelete?.session_date
+                          ? `Sesión del ${formatDisplayDate(sessionPendingDelete.session_date)}${sessionPendingDelete.session_time ? ` a las ${formatDisplayTime(sessionPendingDelete.session_time)}` : ''}.`
+                          : 'Confirma esta acción para continuar.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={onCloseDeleteSessionModal}
+                      aria-label="Cerrar modal"
+                      disabled={isDeletingSession}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-5 py-4">
+                    {deleteSessionModalError && (
+                      <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                        {deleteSessionModalError}
+                      </p>
+                    )}
+                    <p className="text-sm text-slate-700">
+                      {deleteSessionMode === 'force'
+                        ? 'Esta sesión se eliminará de forma definitiva, junto con sus tareas y materiales. Esta acción no se puede deshacer.'
+                        : 'La sesión irá a la papelera. Podrás restaurarla más adelante desde este plan.'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                    <button
+                      type="button"
+                      className="actionButton"
+                      onClick={onCloseDeleteSessionModal}
+                      disabled={isDeletingSession}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="actionButton border-red-300 bg-red-600 text-white hover:bg-red-700"
+                      onClick={onConfirmDeleteSession}
+                      disabled={isDeletingSession}
+                    >
+                      {isDeletingSession
+                        ? (deleteSessionMode === 'force' ? 'Eliminando...' : 'Enviando...')
+                        : (deleteSessionMode === 'force' ? 'Eliminar definitivamente' : 'Enviar a papelera')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {isRestoreSessionModalVisible && (
+              <div
+                className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
+                  showRestoreSessionModal ? 'bg-slate-900/60 opacity-100' : 'bg-slate-900/0 opacity-0'
+                }`}
+                onMouseDown={(event) => {
+                  if (event.target === event.currentTarget && !isRestoringSession) {
+                    onCloseRestoreSessionModal()
+                  }
+                }}
+              >
+                <div
+                  className={`w-full max-w-lg rounded-[5px] border border-slate-200 bg-white shadow-2xl transition-all duration-200 ${
+                    showRestoreSessionModal ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-3 scale-[0.98] opacity-0'
+                  }`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Restaurar sesión</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {sessionPendingRestore?.session_date
+                          ? `Sesión del ${formatDisplayDate(sessionPendingRestore.session_date)}${sessionPendingRestore.session_time ? ` a las ${formatDisplayTime(sessionPendingRestore.session_time)}` : ''}.`
+                          : 'Confirma esta acción para continuar.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      onClick={onCloseRestoreSessionModal}
+                      aria-label="Cerrar modal"
+                      disabled={isRestoringSession}
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 px-5 py-4">
+                    {restoreSessionModalError && (
+                      <p className="rounded-[5px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                        {restoreSessionModalError}
+                      </p>
+                    )}
+                    <p className="text-sm text-slate-700">
+                      La sesión volverá al listado de este plan. Si hay un choque de horario, no se podrá restaurar.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                    <button
+                      type="button"
+                      className="actionButton"
+                      onClick={onCloseRestoreSessionModal}
+                      disabled={isRestoringSession}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="actionButton border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-700"
+                      onClick={onConfirmRestoreSession}
+                      disabled={isRestoringSession}
+                    >
+                      {isRestoringSession ? 'Restaurando...' : 'Restaurar sesión'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             {isDeleteWorkshopModalVisible && (
               <div
                 className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-200 ${
@@ -4680,7 +5274,7 @@ function App() {
                 }`}
                 onMouseDown={(event) => {
                   if (event.target === event.currentTarget) {
-                    setShowPlanModal(false)
+                    onClosePlanModal()
                   }
                 }}
               >
@@ -4692,21 +5286,25 @@ function App() {
                 >
                   <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
                     <div>
-                      <h2 className="text-lg font-semibold text-slate-900">Crear plan de tratamiento</h2>
+                      <h2 className="text-lg font-semibold text-slate-900">
+                        {editingPlanId ? 'Editar plan de tratamiento' : 'Crear plan de tratamiento'}
+                      </h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        Define el año y si el estudiante aumenta de curso o se mantiene.
+                        {editingPlanId
+                          ? 'Actualiza el año, el diagnóstico del plan y el curso asociado.'
+                          : 'Define el año y si el estudiante aumenta de curso o se mantiene.'}
                       </p>
                     </div>
                     <button
                       type="button"
                       className="inline-flex h-9 w-9 items-center justify-center rounded-[5px] border border-slate-300 bg-white text-lg font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
-                      onClick={() => setShowPlanModal(false)}
+                      onClick={onClosePlanModal}
                       aria-label="Cerrar modal"
                     >
                       ×
                     </button>
                   </div>
-                  <form onSubmit={onCreatePlan}>
+                  <form onSubmit={onSavePlan}>
                     <div className="space-y-4 px-5 py-4">
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="plan-year">Año</label>
@@ -4721,9 +5319,23 @@ function App() {
                         />
                       </div>
 
+                      {editingPlanId ? (
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="plan-diagnosis">
+                            Diagnóstico del plan
+                          </label>
+                          <input
+                            id="plan-diagnosis"
+                            className="fieldInput mb-0"
+                            value={planForm.diagnosis_snapshot}
+                            onChange={(e) => setPlanForm((current) => ({ ...current, diagnosis_snapshot: e.target.value }))}
+                          />
+                        </div>
+                      ) : null}
+
                       {planCoursePreview.isFirstPlan ? (
                         <p className="rounded-[5px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                          Este será el primer plan. Quedará con el curso actual:{' '}
+                          {editingPlanId ? 'Este es el primer plan. Quedará con el curso' : 'Este será el primer plan. Quedará con el curso actual'}:{' '}
                           <strong>{planCoursePreview.referenceCourse?.display_name || 'Sin curso'}</strong>.
                         </p>
                       ) : (
@@ -4772,10 +5384,12 @@ function App() {
                       )}
                     </div>
                     <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-                      <button type="button" className="actionButton" onClick={() => setShowPlanModal(false)}>
+                      <button type="button" className="actionButton" onClick={onClosePlanModal}>
                         Cancelar
                       </button>
-                      <button className="actionButton actionButtonPrimary">Crear plan de tratamiento</button>
+                      <button className="actionButton actionButtonPrimary">
+                        {editingPlanId ? 'Guardar cambios' : 'Crear plan de tratamiento'}
+                      </button>
                     </div>
                   </form>
                 </div>

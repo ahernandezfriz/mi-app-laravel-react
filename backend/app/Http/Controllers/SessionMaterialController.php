@@ -30,7 +30,7 @@ class SessionMaterialController extends Controller
         $validated = $request->validate([
             'title' => ['nullable', 'string', 'max:255'],
             'media_library_item_id' => ['nullable', 'integer'],
-            'file' => ['nullable', 'file', 'max:10240', 'mimes:pdf,ppt,pptx,doc,docx,xls,xlsx,jpg,jpeg,png,webp,gif'],
+            'file' => ['nullable', 'file', 'max:10240', 'extensions:pdf,ppt,pptx,doc,docx,xls,xlsx,jpg,jpeg,png,webp,gif'],
         ]);
 
         $mediaItem = null;

@@ -31,7 +31,7 @@ export default function SessionContextCard({
   const sessionWhen = [formattedDate, formattedTime].filter(Boolean).join(' · ')
 
   return (
-    <article className="overflow-hidden rounded-[10px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-white p-4 shadow-sm">
+    <article className="overflow-hidden rounded-[20px] border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-white p-4 shadow-sm">
       <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,2fr)_auto_minmax(0,3fr)] lg:items-stretch lg:gap-x-4">
         <div className="flex min-w-0 items-start gap-3">
           <div

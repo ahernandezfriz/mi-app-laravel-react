@@ -22,6 +22,10 @@ function findLevelForCourse(levels, course) {
     || null
 }
 
+export function planCourseDisplayName(plan, student) {
+  return plan?.course?.display_name || student?.course?.display_name || 'Sin curso'
+}
+
 export function getPreviousPlanForYear(plans, year) {
   const targetYear = Number(year)
   if (!Number.isFinite(targetYear) || !Array.isArray(plans)) return null

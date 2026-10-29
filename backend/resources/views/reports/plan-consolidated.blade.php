@@ -19,7 +19,7 @@
                 </td>
                 <td width="50%">
                     <div class="label">Curso</div>
-                    <div class="value">{{ optional($plan->course)->display_name ?: optional($student->course)->display_name ?: '—' }}</div>
+                    <div class="value">{{ $courseLabel ?? '—' }}</div>
                 </td>
             </tr>
             <tr>
@@ -81,8 +81,8 @@
         </table>
 
         <h2>Gráfico de sesiones</h2>
-        <p class="muted">Progreso por sesiones realizadas y marcas de días suspendidos en la misma línea de tiempo.</p>
-        <p class="legend"><span style="color:#a21caf;">&#9632;</span> Sesión realizada (progreso %)</p>
+        <p class="muted">Logro por sesiones realizadas y marcas de días suspendidos en la misma línea de tiempo.</p>
+        <p class="legend"><span style="color:#a21caf;">&#9632;</span> Sesión realizada (logro %)</p>
         <p class="legend"><span style="color:#f59e0b;">&#9632;</span> Estudiante ausente</p>
         <p class="legend"><span style="color:#0ea5e9;">&#9632;</span> Licencia médica profesional</p>
         <p class="legend"><span style="color:#d946ef;">&#9632;</span> Suspensión de clases</p>

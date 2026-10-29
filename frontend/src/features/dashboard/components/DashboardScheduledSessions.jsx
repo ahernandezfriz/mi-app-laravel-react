@@ -31,13 +31,13 @@ export default function DashboardScheduledSessions({
           <table className="min-w-full divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-3 py-2 text-left font-semibold text-slate-600">Estudiante</th>
-                <th className="px-3 py-2 text-left font-semibold text-slate-600">Hora</th>
-                <th className="px-3 py-2 text-left font-semibold text-slate-600">Curso</th>
-                <th className="px-3 py-2 text-left font-semibold text-slate-600">Plan</th>
-                <th className="px-3 py-2 text-left font-semibold text-slate-600">Objetivo</th>
-                <th className="px-3 py-2 text-left font-semibold text-slate-600">Estado</th>
-                <th className="px-3 py-2 text-right font-semibold text-slate-600">Acción</th>
+                <th className="px-3 py-2 text-left font-bold text-slate-900">Estudiante</th>
+                <th className="px-3 py-2 text-left font-bold text-slate-900">Hora</th>
+                <th className="px-3 py-2 text-left font-bold text-slate-900">Curso</th>
+                <th className="px-3 py-2 text-left font-bold text-slate-900">Plan</th>
+                <th className="px-3 py-2 text-left font-bold text-slate-900">Objetivo</th>
+                <th className="px-3 py-2 text-left font-bold text-slate-900">Estado</th>
+                <th className="px-3 py-2 text-right font-bold text-slate-900">Acción</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">

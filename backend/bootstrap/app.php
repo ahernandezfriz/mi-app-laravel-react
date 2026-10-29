@@ -1,10 +1,12 @@
 <?php
 
+use App\Support\SafeApiError;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
-use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -18,11 +20,33 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn () => null);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->shouldRenderJsonWhen(
+            fn (Request $request): bool => $request->is('api/*') || $request->expectsJson()
+        );
+
         $exceptions->render(function (AuthenticationException $e, Request $request) {
-            if ($request->is('api/*')) {
+            if ($request->is('api/*') || $request->expectsJson()) {
                 return response()->json(['message' => 'No autenticado.'], 401);
             }
 
             return null;
+        });
+
+        $exceptions->respond(function (Response $response, \Throwable $e, Request $request) {
+            if (! $request->is('api/*') && ! $request->expectsJson()) {
+                return $response;
+            }
+
+            $status = $response->getStatusCode();
+            if ($status < 400) {
+                return $response;
+            }
+
+            $payload = json_decode((string) $response->getContent(), true);
+            if (! is_array($payload)) {
+                $payload = [];
+            }
+
+            return response()->json(SafeApiError::sanitizePayload($payload, $status), $status);
         });
     })->create();

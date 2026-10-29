@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { IconActionButton } from '../../../shared/components/ActionButtonIcons'
+import { findWorkshopCourseForYear, workshopCourseLabel, workshopHeldYear } from '../workshopCourseLabel'
 
 const WORKSHOP_FILE_MAX_BYTES = 10 * 1024 * 1024
 const WORKSHOP_FILE_EXTENSIONS = ['pdf', 'ppt', 'pptx', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp', 'gif']
@@ -24,6 +26,51 @@ function isValidHttpUrl(value) {
   }
 }
 
+function FieldLabel({ htmlFor, required = false, children }) {
+  return (
+    <label className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor={htmlFor}>
+      <span>{children}</span>
+      <span className={`normal-case tracking-normal ${required ? 'font-semibold text-violet-700' : 'font-medium text-slate-400'}`}>
+        {required ? 'Obligatorio' : 'Opcional'}
+      </span>
+    </label>
+  )
+}
+
+function FieldMessage({ id, message, type = 'error' }) {
+  if (!message) return null
+  const styles = type === 'warn'
+    ? 'text-amber-800'
+    : 'text-red-600'
+  return (
+    <p id={id} className={`mt-1 text-xs ${styles}`} role="alert">
+      {message}
+    </p>
+  )
+}
+
+function fieldClass(hasError, hasWarn = false) {
+  if (hasError) return 'fieldInput fieldInputError mb-0'
+  if (hasWarn) return 'fieldInput fieldInputWarn mb-0'
+  return 'fieldInput mb-0'
+}
+
+function SavingLabel() {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="savingSpinner" aria-hidden="true" />
+      <span>
+        Guardando
+        <span className="savingDots" aria-hidden="true">
+          <span>.</span>
+          <span>.</span>
+          <span>.</span>
+        </span>
+      </span>
+    </span>
+  )
+}
+
 export default function WorkshopFormModal({
   open,
   title,
@@ -38,21 +85,25 @@ export default function WorkshopFormModal({
   onClose,
   onSubmit,
   saving = false,
+  submitError = '',
+  onClearError,
   mediaLibraryItems = [],
 }) {
   const [draftUrl, setDraftUrl] = useState('')
-  const [urlError, setUrlError] = useState('')
-  const [fileError, setFileError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [fileSource, setFileSource] = useState('upload')
   const [libraryQuery, setLibraryQuery] = useState('')
+  const wasOpen = useRef(false)
 
   useEffect(() => {
-    if (!open) return
-    setFileSource(workshopForm.media_library_item_id ? 'library' : 'upload')
-    setLibraryQuery('')
-    setFileError('')
-    setDraftUrl('')
-    setUrlError('')
+    if (open && !wasOpen.current) {
+      setFileSource(workshopForm.media_library_item_id ? 'library' : 'upload')
+      setLibraryQuery('')
+      setFieldErrors({})
+      setDraftUrl('')
+      onClearError?.()
+    }
+    wasOpen.current = open
   }, [open])
 
   if (!open) return null
@@ -60,7 +111,11 @@ export default function WorkshopFormModal({
   const selectedLevel = levels.find((level) => String(level.id) === String(workshopForm.school_level_id))
   const availableCourses = selectedLevel?.courses ?? []
   const existingCourse = !lockCourse && workshopForm.school_course_id
-    ? existingCourses.find((course) => String(course.id) === String(workshopForm.school_course_id))
+    ? findWorkshopCourseForYear(
+      existingCourses,
+      workshopForm.school_course_id,
+      workshopHeldYear(workshopForm.held_on),
+    )
     : null
   const workshopsCount = Number(existingCourse?.workshops_count || 0)
   const courseAlreadyRegistered = Boolean(existingCourse)
@@ -76,34 +131,76 @@ export default function WorkshopFormModal({
       .some((value) => String(value).toLowerCase().includes(query))
   })
 
+  function clearField(name) {
+    setFieldErrors((prev) => (prev[name] ? { ...prev, [name]: '' } : prev))
+  }
+
+  function updateForm(patch, fieldName) {
+    setWorkshopForm({ ...workshopForm, ...patch })
+    if (fieldName) clearField(fieldName)
+    onClearError?.()
+  }
+
   function handleSubmit(event) {
     event.preventDefault()
-    if (courseAlreadyRegistered) return
+    const nextErrors = {}
+    if (courseAlreadyRegistered) {
+      nextErrors.school_course_id = `${workshopCourseLabel(existingCourse)} ya está en tu listado. Entra a ese curso para registrar otro taller.`
+    }
+    if (!String(workshopForm.name || '').trim()) {
+      nextErrors.name = 'El nombre del taller es obligatorio.'
+    }
+    if (!lockCourse && !workshopForm.school_level_id) {
+      nextErrors.school_level_id = 'El nivel es obligatorio.'
+    }
+    if (!workshopForm.school_course_id) {
+      nextErrors.school_course_id = 'El curso es obligatorio.'
+    }
+    if (!workshopForm.held_on) {
+      nextErrors.held_on = 'La fecha de realización es obligatoria.'
+    }
     const nextFileError = getWorkshopFileError(workshopForm.file)
     if (nextFileError) {
-      setFileError(nextFileError)
+      nextErrors.file = nextFileError
+    }
+    const pendingUrl = draftUrl.trim()
+    let nextUrls = urls
+    if (pendingUrl) {
+      if (!isValidHttpUrl(pendingUrl)) {
+        nextErrors.url = 'Ingresa una URL válida, por ejemplo https://ejemplo.cl/recurso.'
+      } else if (!urls.includes(pendingUrl)) {
+        nextUrls = [...urls, pendingUrl]
+        setWorkshopForm({ ...workshopForm, urls: nextUrls })
+      }
+      if (!nextErrors.url) {
+        setDraftUrl('')
+      }
+    }
+    if (Object.values(nextErrors).some(Boolean)) {
+      setFieldErrors(nextErrors)
       return
     }
-    onSubmit(event)
+    setFieldErrors({})
+    onSubmit(event, { urls: nextUrls })
   }
 
   function onAddUrl() {
     const nextUrl = draftUrl.trim()
     if (!nextUrl) {
-      setUrlError('Ingresa una URL.')
+      setFieldErrors((prev) => ({ ...prev, url: 'Ingresa una URL.' }))
       return
     }
     if (!isValidHttpUrl(nextUrl)) {
-      setUrlError('Ingresa una URL válida, por ejemplo https://ejemplo.cl/recurso.')
+      setFieldErrors((prev) => ({ ...prev, url: 'Ingresa una URL válida, por ejemplo https://ejemplo.cl/recurso.' }))
       return
     }
     if (urls.some((url) => url === nextUrl)) {
-      setUrlError('Esta URL ya fue agregada.')
+      setFieldErrors((prev) => ({ ...prev, url: 'Esta URL ya fue agregada.' }))
       return
     }
     setWorkshopForm({ ...workshopForm, urls: [...urls, nextUrl] })
     setDraftUrl('')
-    setUrlError('')
+    clearField('url')
   }
 
   function onRemoveUrl(urlToRemove) {
@@ -123,10 +220,10 @@ export default function WorkshopFormModal({
       }}
     >
       <div
-        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[5px] border border-slate-200 bg-white shadow-2xl"
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[5px] border border-slate-200 bg-white shadow-2xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+        <div className="flex shrink-0 items-start justify-between border-b border-slate-200 px-5 py-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
             <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
@@ -140,86 +237,87 @@ export default function WorkshopFormModal({
             ×
           </button>
         </div>
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="grid gap-3 px-5 py-4 md:grid-cols-2">
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit} noValidate>
+          <div className="grid min-h-0 flex-1 gap-3 overflow-y-auto px-5 py-4 md:grid-cols-2">
             <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workshop-name">
-                Nombre del taller
-              </label>
+              <FieldLabel htmlFor="workshop-name" required>Nombre del taller</FieldLabel>
               <input
                 id="workshop-name"
-                className="fieldInput mb-0"
+                className={fieldClass(Boolean(fieldErrors.name))}
                 placeholder="Nombre del taller"
                 value={workshopForm.name}
-                onChange={(e) => setWorkshopForm({ ...workshopForm, name: e.target.value })}
+                onChange={(e) => updateForm({ name: e.target.value }, 'name')}
+                maxLength={255}
                 required
+                aria-invalid={Boolean(fieldErrors.name)}
+                aria-describedby={fieldErrors.name ? 'workshop-name-error' : undefined}
               />
+              <FieldMessage id="workshop-name-error" message={fieldErrors.name} />
             </div>
             <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workshop-objective">
-                Objetivo del taller
-              </label>
+              <FieldLabel htmlFor="workshop-objective">Objetivo del taller</FieldLabel>
               <input
                 id="workshop-objective"
                 className="fieldInput mb-0"
                 placeholder="Objetivo del taller"
                 value={workshopForm.objective}
-                onChange={(e) => setWorkshopForm({ ...workshopForm, objective: e.target.value })}
+                onChange={(e) => updateForm({ objective: e.target.value })}
+                maxLength={255}
               />
             </div>
             <div className="md:col-span-2">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workshop-description">
-                Descripción del taller
-              </label>
+              <FieldLabel htmlFor="workshop-description">Descripción del taller</FieldLabel>
               <textarea
                 id="workshop-description"
                 className="fieldInput mb-0 min-h-24"
                 rows={4}
                 placeholder="Descripción del taller"
                 value={workshopForm.description}
-                onChange={(e) => setWorkshopForm({ ...workshopForm, description: e.target.value })}
+                onChange={(e) => updateForm({ description: e.target.value })}
               />
             </div>
             <div className={`md:col-span-2 grid gap-3 ${lockCourse ? '' : 'md:grid-cols-3'}`}>
               {lockCourse ? null : (
                 <>
                   <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workshop-level">
-                      Nivel
-                    </label>
+                    <FieldLabel htmlFor="workshop-level" required>Nivel</FieldLabel>
                     <select
                       id="workshop-level"
-                      className="fieldInput mb-0"
+                      className={fieldClass(Boolean(fieldErrors.school_level_id))}
                       value={workshopForm.school_level_id}
-                      onChange={(e) => setWorkshopForm({
-                        ...workshopForm,
+                      onChange={(e) => updateForm({
                         school_level_id: e.target.value,
                         school_course_id: '',
-                      })}
+                      }, 'school_level_id')}
                       required
+                      aria-invalid={Boolean(fieldErrors.school_level_id)}
+                      aria-describedby={fieldErrors.school_level_id ? 'workshop-level-error' : undefined}
                     >
                       <option value="">Selecciona el nivel</option>
                       {levels.map((level) => (
                         <option key={level.id} value={String(level.id)}>{level.display_name}</option>
                       ))}
                     </select>
+                    <FieldMessage id="workshop-level-error" message={fieldErrors.school_level_id} />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workshop-course">
-                      Curso
-                    </label>
+                    <FieldLabel htmlFor="workshop-course" required>Curso</FieldLabel>
                     <select
                       id="workshop-course"
-                      className={`fieldInput mb-0 ${courseAlreadyRegistered ? 'border-red-400' : ''}`}
+                      className={fieldClass(Boolean(fieldErrors.school_course_id), courseAlreadyRegistered)}
                       value={workshopForm.school_course_id}
-                      onChange={(e) => setWorkshopForm({ ...workshopForm, school_course_id: e.target.value })}
+                      onChange={(e) => updateForm({ school_course_id: e.target.value }, 'school_course_id')}
                       required
-                      aria-invalid={courseAlreadyRegistered}
-                      aria-describedby={courseAlreadyRegistered ? 'workshop-course-error' : undefined}
+                      aria-invalid={courseAlreadyRegistered || Boolean(fieldErrors.school_course_id)}
+                      aria-describedby={courseAlreadyRegistered || fieldErrors.school_course_id ? 'workshop-course-error' : undefined}
                     >
                       <option value="">Selecciona el curso</option>
                       {availableCourses.map((course) => {
-                        const alreadyHasWorkshops = existingCourses.some((item) => String(item.id) === String(course.id))
+                        const alreadyHasWorkshops = Boolean(findWorkshopCourseForYear(
+                          existingCourses,
+                          course.id,
+                          workshopHeldYear(workshopForm.held_on),
+                        ))
                         return (
                           <option key={course.id} value={String(course.id)}>
                             {alreadyHasWorkshops ? `${course.display_name} (ya tiene talleres)` : course.display_name}
@@ -230,7 +328,7 @@ export default function WorkshopFormModal({
                     {courseAlreadyRegistered ? (
                       <div id="workshop-course-error" className="mt-2 rounded-[5px] border border-amber-200 bg-amber-50 px-3 py-2" role="alert">
                         <p className="text-xs text-amber-800">
-                          Este curso ya está en tu listado y cuenta con {workshopsCount} {workshopsCount === 1 ? 'taller' : 'talleres'}. Entra al curso para registrar otro taller y evita duplicarlo aquí.
+                          {workshopCourseLabel(existingCourse)} ya está en tu listado y cuenta con {workshopsCount} {workshopsCount === 1 ? 'taller' : 'talleres'}. Entra a ese curso para registrar otro taller.
                         </p>
                         {onOpenExistingCourse ? (
                           <button
@@ -242,33 +340,38 @@ export default function WorkshopFormModal({
                           </button>
                         ) : null}
                       </div>
-                    ) : null}
+                    ) : (
+                      <FieldMessage id="workshop-course-error" message={fieldErrors.school_course_id} />
+                    )}
                   </div>
                 </>
               )}
               <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workshop-held-on">
-                  Fecha de realización
-                </label>
+                <FieldLabel htmlFor="workshop-held-on" required>Fecha de realización</FieldLabel>
                 <input
                   id="workshop-held-on"
                   type="date"
-                  className="fieldInput mb-0"
+                  className={fieldClass(Boolean(fieldErrors.held_on))}
                   value={workshopForm.held_on}
-                  onChange={(e) => setWorkshopForm({ ...workshopForm, held_on: e.target.value })}
+                  onChange={(e) => updateForm({ held_on: e.target.value }, 'held_on')}
                   required
+                  aria-invalid={Boolean(fieldErrors.held_on)}
+                  aria-describedby={fieldErrors.held_on ? 'workshop-held-on-error' : undefined}
                 />
+                <FieldMessage id="workshop-held-on-error" message={fieldErrors.held_on} />
               </div>
             </div>
             <div className="md:col-span-2 mt-6">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Archivo del taller</p>
+              <FieldLabel htmlFor={fileSource === 'upload' ? 'workshop-file' : 'workshop-library-search'}>
+                Archivo del taller
+              </FieldLabel>
               <div className="mb-3 flex flex-wrap gap-2">
                 <button
                   type="button"
                   className={`actionButton ${fileSource === 'upload' ? 'actionButtonPrimary' : ''}`}
                   onClick={() => {
                     setFileSource('upload')
-                    setWorkshopForm({ ...workshopForm, media_library_item_id: '' })
+                    updateForm({ media_library_item_id: '' })
                   }}
                 >
                   Subir archivo
@@ -278,8 +381,7 @@ export default function WorkshopFormModal({
                   className={`actionButton ${fileSource === 'library' ? 'actionButtonPrimary' : ''}`}
                   onClick={() => {
                     setFileSource('library')
-                    setWorkshopForm({ ...workshopForm, file: null })
-                    setFileError('')
+                    updateForm({ file: null }, 'file')
                   }}
                 >
                   Buscar en biblioteca
@@ -287,26 +389,26 @@ export default function WorkshopFormModal({
               </div>
               {fileSource === 'upload' ? (
                 <>
-                  <label className="sr-only" htmlFor="workshop-file">Archivo del taller</label>
                   <input
                     id="workshop-file"
                     type="file"
                     accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.gif,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    className="fieldInput mb-0 pt-2 text-sm"
+                    className={`${fieldClass(Boolean(fieldErrors.file))} pt-2 text-sm`}
                     onChange={(e) => {
                       const nextFile = e.target.files?.[0] || null
-                      setFileError(getWorkshopFileError(nextFile))
                       setWorkshopForm({ ...workshopForm, file: nextFile, media_library_item_id: '' })
+                      setFieldErrors((prev) => ({ ...prev, file: getWorkshopFileError(nextFile) }))
                     }}
+                    aria-invalid={Boolean(fieldErrors.file)}
+                    aria-describedby={fieldErrors.file ? 'workshop-file-error' : 'workshop-file-help'}
                   />
-                  {fileError ? <p className="mt-1 text-xs text-red-600">{fileError}</p> : null}
-                  <p className="mt-1 text-xs text-slate-500">
+                  <FieldMessage id="workshop-file-error" message={fieldErrors.file} />
+                  <p id="workshop-file-help" className="mt-1 text-xs text-slate-500">
                     El archivo también quedará disponible en Biblioteca de medios.
                   </p>
                 </>
               ) : (
                 <>
-                  <label className="sr-only" htmlFor="workshop-library-search">Buscar en biblioteca de medios</label>
                   <input
                     id="workshop-library-search"
                     className="fieldInput mb-0"
@@ -322,7 +424,7 @@ export default function WorkshopFormModal({
                       <button
                         type="button"
                         className="actionButton"
-                        onClick={() => setWorkshopForm({ ...workshopForm, media_library_item_id: '' })}
+                        onClick={() => updateForm({ media_library_item_id: '' })}
                       >
                         Quitar
                       </button>
@@ -345,11 +447,10 @@ export default function WorkshopFormModal({
                               className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
                                 selected ? 'bg-violet-50 text-slate-900' : 'text-slate-700 hover:bg-slate-50'
                               }`}
-                              onClick={() => setWorkshopForm({
-                                ...workshopForm,
+                              onClick={() => updateForm({
                                 media_library_item_id: String(item.id),
                                 file: null,
-                              })}
+                              }, 'file')}
                             >
                               <span className="truncate">{item.title || item.stored_name || item.original_name}</span>
                               <span className="shrink-0 text-xs text-slate-500">{item.stored_name || item.original_name}</span>
@@ -368,18 +469,16 @@ export default function WorkshopFormModal({
               ) : null}
             </div>
             <div className="md:col-span-2 mt-6">
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500" htmlFor="workshop-url">
-                URLs del taller
-              </label>
+              <FieldLabel htmlFor="workshop-url">URLs del taller</FieldLabel>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input
                   id="workshop-url"
-                  className="fieldInput mb-0"
+                  className={fieldClass(Boolean(fieldErrors.url))}
                   placeholder="https://ejemplo.cl/recurso"
                   value={draftUrl}
                   onChange={(e) => {
                     setDraftUrl(e.target.value)
-                    setUrlError('')
+                    clearField('url')
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
@@ -387,35 +486,51 @@ export default function WorkshopFormModal({
                       onAddUrl()
                     }
                   }}
+                  aria-invalid={Boolean(fieldErrors.url)}
+                  aria-describedby={fieldErrors.url ? 'workshop-url-error' : 'workshop-url-help'}
                 />
                 <button type="button" className="actionButton" onClick={onAddUrl}>
                   Agregar URL
                 </button>
               </div>
-              {urlError ? <p className="mt-1 text-xs text-red-600">{urlError}</p> : null}
+              <FieldMessage id="workshop-url-error" message={fieldErrors.url} />
               {urls.length > 0 ? (
                 <ul className="mt-2 space-y-2">
                   {urls.map((url) => (
                     <li key={url} className="flex items-center justify-between gap-2 rounded-[5px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                       <span className="truncate text-slate-700">{url}</span>
-                      <button type="button" className="actionButton" onClick={() => onRemoveUrl(url)}>
-                        Eliminar
-                      </button>
+                      <IconActionButton
+                        variant="delete"
+                        label="Eliminar"
+                        onClick={() => onRemoveUrl(url)}
+                      />
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="mt-2 text-xs text-slate-500">Aún no hay URLs asociadas. Agrégalas antes de guardar.</p>
+                <p id="workshop-url-help" className="mt-2 text-xs text-slate-500">Puedes agregar enlaces relacionados con el taller.</p>
               )}
             </div>
           </div>
-          <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-4">
-            <button type="button" className="actionButton" onClick={onClose}>
-              Cancelar
-            </button>
-            <button type="submit" className="actionButton actionButtonPrimary" disabled={saving || courseAlreadyRegistered}>
-              {saving ? 'Guardando…' : 'Guardar taller'}
-            </button>
+          <div className="flex shrink-0 flex-col gap-3 border-t border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            {submitError ? (
+              <p className="text-sm text-red-600" role="alert">{submitError}</p>
+            ) : (
+              <span className="hidden sm:block" />
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" className="actionButton" onClick={onClose} disabled={saving}>
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="actionButton actionButtonPrimary inline-flex min-w-[10.5rem] items-center justify-center"
+                disabled={saving || courseAlreadyRegistered}
+                aria-busy={saving}
+              >
+                {saving ? <SavingLabel /> : 'Guardar taller'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

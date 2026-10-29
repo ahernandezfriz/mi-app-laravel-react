@@ -14,7 +14,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Throwable;
 
 class ReportController extends Controller
 {
@@ -77,29 +79,44 @@ class ReportController extends Controller
         $this->authorizeStudent($request, $student);
         abort_unless($treatmentPlan->student_id === $student->id, 404, 'Plan no encontrado para el estudiante.');
 
-        $student->loadMissing('course');
+        @ini_set('memory_limit', '512M');
+        @set_time_limit(120);
+
+        $this->safeLoadStudentCourse($student);
         $plan = $treatmentPlan->load([
-            'course',
             'sessions' => fn ($query) => $query->with('tasks')->orderBy('session_date')->orderBy('id'),
         ]);
+        $this->safeLoadPlanCourse($plan);
 
         $today = Carbon::now('America/Santiago')->toDateString();
         $age = $this->reportAge($student, $today);
         $charts = PlanReportCharts::build($plan->sessions);
+        $courseLabel = $plan->relationLoaded('course')
+            ? ($plan->getRelation('course')?->display_name)
+            : null;
+        $courseLabel = $courseLabel
+            ?: ($student->relationLoaded('course') ? $student->getRelation('course')?->display_name : null);
 
-        $pdf = Pdf::loadView('reports.plan-consolidated', [
-            'student' => $student,
-            'plan' => $plan,
-            'exactAge' => $age['exactAge'],
-            'ageReference' => $age['ageReference'],
-            'charts' => $charts,
-            'professional' => $this->reportProfessional($request),
-        ])->setPaper('a4', 'portrait')->setOption('isRemoteEnabled', true);
+        try {
+            $pdf = Pdf::loadView('reports.plan-consolidated', [
+                'student' => $student,
+                'plan' => $plan,
+                'courseLabel' => $courseLabel ?: '—',
+                'exactAge' => $age['exactAge'],
+                'ageReference' => $age['ageReference'],
+                'charts' => $charts,
+                'professional' => $this->reportProfessional($request),
+            ])->setPaper('a4', 'portrait')->setOption('isRemoteEnabled', true);
 
-        $fileName = $this->consolidatedPdfFilename($student, $plan);
+            $fileName = $this->consolidatedPdfFilename($student, $plan);
+            $output = $pdf->output();
+        } catch (Throwable $exception) {
+            report($exception);
+            abort(500, 'No se pudo generar el PDF consolidado.');
+        }
 
         return response(
-            $pdf->output(),
+            $output,
             200,
             [
                 'Content-Type' => 'application/pdf',
@@ -118,7 +135,7 @@ class ReportController extends Controller
         TherapySession $session
     ): array {
         $sessionData = $this->loadAuthorizedSession($request, $student, $treatmentPlan, $session);
-        $student->loadMissing('course');
+        $this->safeLoadStudentCourse($student);
         $age = $this->reportAge($student, $sessionData->session_date);
 
         return [
@@ -193,6 +210,26 @@ class ReportController extends Controller
         abort_unless($session->treatment_plan_id === $treatmentPlan->id, 404, 'Sesion no encontrada para el plan.');
 
         return $session->load('tasks');
+    }
+
+    private function safeLoadStudentCourse(Student $student): void
+    {
+        try {
+            $student->loadMissing('course');
+        } catch (Throwable) {
+            // El curso del estudiante es opcional en los informes.
+        }
+    }
+
+    private function safeLoadPlanCourse(TreatmentPlan $plan): void
+    {
+        try {
+            if (Schema::hasColumn('treatment_plans', 'school_course_id')) {
+                $plan->loadMissing('course');
+            }
+        } catch (Throwable) {
+            // El curso histórico del plan es opcional en los informes.
+        }
     }
 
     private function authorizeStudent(Request $request, Student $student): void

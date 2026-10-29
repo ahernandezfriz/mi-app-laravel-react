@@ -47,10 +47,13 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::put('/students/{student}/treatment-plans/{treatmentPlan}', [TreatmentPlanController::class, 'update']);
     Route::delete('/students/{student}/treatment-plans/{treatmentPlan}', [TreatmentPlanController::class, 'destroy']);
     Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions', [TherapySessionController::class, 'index']);
+    Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions/trash', [TherapySessionController::class, 'trash']);
     Route::get('/sessions/today', [TherapySessionController::class, 'today']);
     Route::get('/sessions/calendar-counts', [TherapySessionController::class, 'calendarCounts']);
     Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions', [TherapySessionController::class, 'store']);
     Route::put('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}', [TherapySessionController::class, 'update']);
+    Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/restore', [TherapySessionController::class, 'restore']);
+    Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/force', [TherapySessionController::class, 'forceDestroy']);
     Route::delete('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}', [TherapySessionController::class, 'destroy']);
     Route::get('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/pdf', [ReportController::class, 'sessionPdf']);
     Route::post('/students/{student}/treatment-plans/{treatmentPlan}/sessions/{session}/send-report', [ReportController::class, 'sendSessionReportEmail']);

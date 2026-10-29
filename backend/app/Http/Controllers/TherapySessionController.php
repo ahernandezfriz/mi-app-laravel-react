@@ -119,9 +119,29 @@ class TherapySessionController extends Controller
         $this->authorizeStudent($request, $student);
         $this->ensurePlanBelongsToStudent($student, $treatmentPlan);
 
-        return response()->json(
-            $treatmentPlan->sessions()->orderByDesc('session_date')->get()
-        );
+        $sessions = TherapySession::query()
+            ->where('treatment_plan_id', $treatmentPlan->id)
+            ->orderByDesc('session_date')
+            ->orderByDesc('id')
+            ->get()
+            ->values();
+
+        return response()->json($sessions);
+    }
+
+    public function trash(Request $request, Student $student, TreatmentPlan $treatmentPlan): JsonResponse
+    {
+        $this->authorizeStudent($request, $student);
+        $this->ensurePlanBelongsToStudent($student, $treatmentPlan);
+
+        $sessions = TherapySession::onlyTrashed()
+            ->where('treatment_plan_id', $treatmentPlan->id)
+            ->orderByDesc('deleted_at')
+            ->orderByDesc('id')
+            ->get()
+            ->values();
+
+        return response()->json($sessions);
     }
 
     public function store(Request $request, Student $student, TreatmentPlan $treatmentPlan): JsonResponse
@@ -204,6 +224,38 @@ class TherapySessionController extends Controller
         return response()->json(status: 204);
     }
 
+    public function restore(Request $request, Student $student, TreatmentPlan $treatmentPlan, int $session): JsonResponse
+    {
+        $this->authorizeStudent($request, $student);
+        $this->ensurePlanBelongsToStudent($student, $treatmentPlan);
+        $trashedSession = $this->resolveTrashedSession($treatmentPlan, $session);
+
+        $sessionDate = $trashedSession->session_date instanceof \DateTimeInterface
+            ? $trashedSession->session_date->format('Y-m-d')
+            : substr((string) $trashedSession->session_date, 0, 10);
+
+        $this->ensureNoScheduleConflict(
+            request: $request,
+            sessionDate: $sessionDate,
+            sessionTime: substr((string) $trashedSession->session_time, 0, 5),
+            ignoreSessionId: $trashedSession->id
+        );
+
+        $trashedSession->restore();
+
+        return response()->json($trashedSession->fresh());
+    }
+
+    public function forceDestroy(Request $request, Student $student, TreatmentPlan $treatmentPlan, int $session): JsonResponse
+    {
+        $this->authorizeStudent($request, $student);
+        $this->ensurePlanBelongsToStudent($student, $treatmentPlan);
+        $trashedSession = $this->resolveTrashedSession($treatmentPlan, $session);
+        $trashedSession->forceDelete();
+
+        return response()->json(status: 204);
+    }
+
     private function authorizeStudent(Request $request, Student $student): void
     {
         if ($request->user()->role !== 'profesional') {
@@ -222,6 +274,14 @@ class TherapySessionController extends Controller
     private function ensureSessionBelongsToPlan(TreatmentPlan $treatmentPlan, TherapySession $session): void
     {
         abort_unless($session->treatment_plan_id === $treatmentPlan->id, 404, 'Sesion no encontrada para el plan.');
+    }
+
+    private function resolveTrashedSession(TreatmentPlan $treatmentPlan, int $sessionId): TherapySession
+    {
+        $session = TherapySession::onlyTrashed()->find($sessionId);
+        abort_unless($session && $session->treatment_plan_id === $treatmentPlan->id, 404, 'Sesion no encontrada en la papelera.');
+
+        return $session;
     }
 
     private function ensureNoScheduleConflict(

@@ -7,6 +7,7 @@ services:
     working_dir: /var/www
     volumes:
       - ./backend:/var/www
+      - ./backend/docker/php-uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
     environment:
       APP_ENV: local
       APP_DEBUG: "true"
@@ -26,6 +27,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: gestion-nginx-app
+    restart: unless-stopped
     ports:
       - "8080:80"
     volumes:

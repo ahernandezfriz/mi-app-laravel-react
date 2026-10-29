@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ButtonLabel, IconActionButton, PlusIcon } from '../../../shared/components/ActionButtonIcons'
 
 export default function TaskBankSection({
   taskTemplateFilters,
@@ -132,7 +133,7 @@ export default function TaskBankSection({
           </p>
         </div>
         <button type="button" className="actionButton actionButtonPrimary" onClick={onOpenCreateTemplateModal}>
-          Crear tarea
+          <ButtonLabel icon={<PlusIcon />}>Crear tarea</ButtonLabel>
         </button>
       </div>
 
@@ -210,12 +211,12 @@ export default function TaskBankSection({
         <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Nombre</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Objetivo</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Descripción</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Categoria</th>
-              <th className="px-3 py-3 text-left font-semibold text-slate-600">Creada</th>
-              <th className="px-3 py-3 text-right font-semibold text-slate-600">Opciones</th>
+              <th className="px-3 py-3 text-left font-bold text-slate-900">Nombre</th>
+              <th className="px-3 py-3 text-left font-bold text-slate-900">Objetivo</th>
+              <th className="px-3 py-3 text-left font-bold text-slate-900">Descripción</th>
+              <th className="px-3 py-3 text-left font-bold text-slate-900">Categoria</th>
+              <th className="px-3 py-3 text-left font-bold text-slate-900">Creada</th>
+              <th className="px-3 py-3 text-right font-bold text-slate-900">Opciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -255,7 +256,11 @@ export default function TaskBankSection({
                     <button type="button" className="actionButton" onClick={() => onToggleFavoriteTemplate(template)}>
                       {template.is_favorite ? '★ Favorita' : '☆ Favorita'}
                     </button>
-                    <button type="button" className="actionButton" onClick={() => onOpenEditTemplateModal(template)}>Editar</button>
+                    <IconActionButton
+                      variant="edit"
+                      label="Editar"
+                      onClick={() => onOpenEditTemplateModal(template)}
+                    />
                     <button type="button" className="actionButton" onClick={() => onDuplicateTemplate(template.id)}>Duplicar</button>
                     {template.archived_at ? (
                       <button type="button" className="actionButton" onClick={() => onRestoreTemplate(template.id)}>Restaurar</button>

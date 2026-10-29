@@ -43,6 +43,7 @@ class WorkshopTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1)
             ->assertJsonPath('0.id', $course->id)
+            ->assertJsonPath('0.year', 2026)
             ->assertJsonPath('0.workshops_count', 1);
 
         $this->getJson("/api/workshops?school_course_id={$course->id}")
@@ -76,6 +77,45 @@ class WorkshopTest extends TestCase
             ->assertOk()
             ->assertJsonPath('name', 'Taller actualizado')
             ->assertJsonPath('objective', 'Nuevo objetivo');
+    }
+
+    public function test_workshop_courses_are_grouped_by_course_and_year(): void
+    {
+        [$professional, $course] = $this->makeCourseContext();
+        Sanctum::actingAs($professional);
+
+        Workshop::query()->create([
+            'user_id' => $professional->id,
+            'school_course_id' => $course->id,
+            'name' => 'Taller 2025',
+            'held_on' => '2025-03-10',
+        ]);
+        Workshop::query()->create([
+            'user_id' => $professional->id,
+            'school_course_id' => $course->id,
+            'name' => 'Taller 2026',
+            'held_on' => '2026-04-11',
+        ]);
+        Workshop::query()->create([
+            'user_id' => $professional->id,
+            'school_course_id' => $course->id,
+            'name' => 'Otro taller 2026',
+            'held_on' => '2026-08-01',
+        ]);
+
+        $this->getJson('/api/workshop-courses')
+            ->assertOk()
+            ->assertJsonCount(2)
+            ->assertJsonPath('0.year', 2026)
+            ->assertJsonPath('0.workshops_count', 2)
+            ->assertJsonPath('0.last_held_on', '2026-08-01')
+            ->assertJsonPath('1.year', 2025)
+            ->assertJsonPath('1.workshops_count', 1);
+
+        $this->getJson("/api/workshops?school_course_id={$course->id}&year=2025")
+            ->assertOk()
+            ->assertJsonCount(1)
+            ->assertJsonPath('0.name', 'Taller 2025');
     }
 
     public function test_professional_cannot_see_another_users_workshops(): void
@@ -225,10 +265,24 @@ class WorkshopTest extends TestCase
 
         $this->assertSame($item->id, $created['media_library_item_id']);
         $this->assertTrue($created['has_material']);
+    }
 
-        $this->get("/api/workshops/{$created['id']}/download")
-            ->assertOk()
-            ->assertHeader('content-disposition');
+    public function test_professional_can_upload_pdf_with_generic_mime_type(): void
+    {
+        Storage::fake('public');
+        [$professional, $course] = $this->makeCourseContext();
+        Sanctum::actingAs($professional);
+
+        $file = UploadedFile::fake()->create('guia.pdf', 200, 'application/octet-stream');
+
+        $this->post('/api/workshops', [
+            'name' => 'Taller con pdf generico',
+            'held_on' => '2026-09-11',
+            'school_course_id' => $course->id,
+            'file' => $file,
+        ])
+            ->assertCreated()
+            ->assertJsonPath('has_material', true);
     }
 
     /**

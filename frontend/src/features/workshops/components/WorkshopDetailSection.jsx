@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { BackIcon, ButtonLabel, IconActionButton } from '../../../shared/components/ActionButtonIcons'
 import WorkshopFormModal from './WorkshopFormModal'
+import { workshopCourseLabel, workshopHeldYear } from '../workshopCourseLabel'
 
 function formatFileSize(bytes) {
   const size = Number(bytes || 0)
@@ -23,13 +25,17 @@ export default function WorkshopDetailSection({
   setEditingWorkshopId,
   onSaveWorkshop,
   savingWorkshop,
+  submitError = '',
+  onClearSubmitError,
   mediaLibraryItems = [],
 }) {
   const [showModal, setShowModal] = useState(false)
   const urls = Array.isArray(workshop.urls) ? workshop.urls : []
-  const courseName = workshop.course?.display_name || 'Sin curso'
-  const levelName = workshop.course?.level?.display_name || ''
-  const courseLine = [courseName, levelName].filter(Boolean).join(' · ')
+  const courseName = workshopCourseLabel({
+    display_name: workshop.course?.display_name || 'Sin curso',
+    year: workshopHeldYear(workshop.held_on),
+  })
+  const courseLine = courseName
   const heldOn = formatDisplayDate(workshop.held_on)
 
   function onOpenEditModal() {
@@ -42,8 +48,8 @@ export default function WorkshopDetailSection({
     setEditingWorkshopId(null)
   }
 
-  async function onSubmit(event) {
-    const saved = await onSaveWorkshop(event)
+  async function onSubmit(event, overrides) {
+    const saved = await onSaveWorkshop(event, overrides)
     if (saved) {
       setShowModal(false)
     }
@@ -54,14 +60,18 @@ export default function WorkshopDetailSection({
       <section className="sectionCard">
         <div className="mb-4 flex flex-wrap justify-end gap-2">
           <button type="button" className="actionButton" onClick={onBack}>
-            Volver a talleres
+            <ButtonLabel icon={<BackIcon />}>Volver a talleres</ButtonLabel>
           </button>
-          <button type="button" className="actionButton" onClick={onOpenEditModal}>
-            Editar
-          </button>
-          <button type="button" className="actionButton" onClick={() => onDeleteWorkshop(workshop)}>
-            Eliminar
-          </button>
+          <IconActionButton
+            variant="edit"
+            label="Editar"
+            onClick={onOpenEditModal}
+          />
+          <IconActionButton
+            variant="delete"
+            label="Eliminar"
+            onClick={() => onDeleteWorkshop(workshop)}
+          />
         </div>
 
         <p className="text-sm text-slate-500">
@@ -113,9 +123,11 @@ export default function WorkshopDetailSection({
                 {[workshop.mime_type, formatFileSize(workshop.size_bytes)].filter(Boolean).join(' · ')}
               </p>
             </div>
-            <button type="button" className="actionButton actionButtonPrimary" onClick={() => onDownloadWorkshop(workshop)}>
-              Descargar
-            </button>
+            <IconActionButton
+              variant="download"
+              label="Descargar"
+              onClick={() => onDownloadWorkshop(workshop)}
+            />
           </div>
         ) : (
           <p className="text-sm text-slate-500">Este taller no tiene un archivo adjunto.</p>
@@ -134,6 +146,8 @@ export default function WorkshopDetailSection({
         onClose={onCloseModal}
         onSubmit={onSubmit}
         saving={savingWorkshop}
+        submitError={submitError}
+        onClearError={onClearSubmitError}
         mediaLibraryItems={mediaLibraryItems}
       />
     </section>
